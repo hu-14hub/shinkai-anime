@@ -2,12 +2,20 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { ChevronLeft, ChevronRight, Flag, Warehouse } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Flag,
+  Server,
+  Share2,
+} from "lucide-react";
 import { addReport } from "@/lib/store";
 import type { Dictionary } from "@/i18n/get-dictionary";
 import type { Locale } from "@/i18n/config";
-import type { Anime, EpisodeStream } from "@/types";
+import type { Anime, EpisodeStream, StreamingSource } from "@/types";
+import { cn } from "@/lib/utils";
 import { VideoPlayer } from "@/components/video-player";
 import { CommentsSection } from "@/components/comments-section";
 
@@ -16,14 +24,71 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
 }) {
   const router = useRouter();
   const [reported, setReported] = useState(false);
+  // Track which server pill is active. Reset on episode/anonymous change —
+  // client navigation keeps this component mounted, so we re-init here.
+  const [activeSourceId, setActiveSourceId] = useState<string>(
+    () => stream.sources.find((s) => s.default)?.id ?? stream.sources[0]?.id ?? ""
+  );
+  useEffect(() => {
+    setActiveSourceId(
+      stream.sources.find((s) => s.default)?.id ?? stream.sources[0]?.id ?? ""
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug, num]);
+
   const current = anime.episodes[num - 1];
   const hasNext = num < anime.episodes.length;
   const hasPrev = num > 1;
+  // The P2P magnet handed to the player is derived from the *active* source
+  // so that toggling the P2P pill actually flips WebTorrent on/off.
+  const activeSource: StreamingSource | undefined = stream.sources.find(
+    (s) => s.id === activeSourceId
+  );
+  const activeMagnet = activeSource?.magnet;
 
   const report = () => {
     addReport({ slug, targetType: "video", targetId: `${slug}-ep-${num}`, reason: "Broken video source" });
     setReported(true);
     window.setTimeout(() => setReported(false), 2500);
+  };
+
+  // Interactive server pill. Ordinary HLS servers render as plain pills;
+  // the P2P/WebTorrent pill gets a gradient + a distinct icon so users can
+  // spot the P2P option at a glance.
+  const renderPill = (s: StreamingSource) => {
+    const isActive = s.id === activeSourceId;
+    const isP2P = s.id === "p2p" || !!s.magnet;
+    return (
+      <button
+        key={s.id}
+        type="button"
+        role="radio"
+        aria-checked={isActive}
+        aria-label={`${s.name} ${s.quality}`}
+        onClick={() => setActiveSourceId(s.id)}
+        className={cn(
+          "group flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all duration-300",
+          isActive
+            ? isP2P
+              ? "bg-gradient-to-r from-brand via-brand to-brand-300 text-neutral-950 shadow-lg shadow-brand/25"
+              : "bg-brand text-neutral-950 shadow-lg shadow-brand/20"
+            : isP2P
+              ? "bg-white/5 text-neutral-200 ring-1 ring-brand/40 hover:bg-white/10 hover:ring-brand/60 hover:text-white"
+              : "bg-white/5 text-neutral-300 hover:bg-white/10 hover:text-white"
+        )}
+      >
+        {isP2P ? (
+          <Share2 className="h-3 w-3" aria-hidden />
+        ) : (
+          <Server className="h-3 w-3" aria-hidden />
+        )}
+        <span>{s.name}</span>
+        <span dir="ltr" className="rounded-full bg-black/10 px-1.5 py-0.5 text-[10px] font-semibold">
+          {s.quality}
+        </span>
+        {isActive && <Check className="h-3 w-3" aria-hidden />}
+      </button>
+    );
   };
 
   return (
@@ -38,7 +103,9 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
           poster={anime.banner}
           epTitle={current.title[locale]}
           dict={t}
-          magnet={stream.magnet}
+          magnet={activeMagnet}
+          requestedSourceId={activeSourceId}
+          onSourceChange={setActiveSourceId}
           hasNext={hasNext}
           hasPrev={hasPrev}
           fillerEpisodes={anime.episodes.filter((e) => e.isFiller).map((e) => e.number)}
@@ -77,28 +144,36 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3 sm:p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-bold uppercase tracking-widest text-neutral-500">{t.player.server}</span>
-          {stream.sources.map((s) => (
-            <span key={s.id}
-              className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${
-                s.default ? "bg-brand text-neutral-950 shadow-lg shadow-brand/20" : "bg-white/5 text-neutral-300"
-              }`}>
-              {s.name}
-              <span dir="ltr" className="text-[10px]">{s.quality}</span>
-            </span>
-          ))}
+      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3 sm:p-4">
+        <div role="radiogroup" aria-label={t.player.server} className="flex flex-wrap items-center gap-2">
+          <span className="mr-1 inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-neutral-500">
+            <Server className="h-3.5 w-3.5" aria-hidden />
+            {t.player.server}
+          </span>
+          {stream.sources.map(renderPill)}
         </div>
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={report}
-            className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-xs font-semibold text-neutral-300 transition-all duration-300 hover:bg-white/10 hover:text-white">
-            <Flag className="h-3 w-3" aria-hidden />
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-white/5 pt-3">
+          <div className="flex min-w-0 items-center gap-2 text-xs text-neutral-400">
+            <span
+              className={cn(
+                "h-2 w-2 shrink-0 rounded-full",
+                activeSource?.magnet ? "bg-emerald-400 shadow shadow-emerald-500/40" : "bg-neutral-500"
+              )}
+              aria-hidden
+            />
+            <span dir="ltr" className="truncate font-mono text-[11px]">
+              {(activeSource?.magnet ?? activeSource?.url ?? "—").slice(0, 64)}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={report}
+            className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-xs font-semibold text-neutral-300 transition-all duration-300 hover:bg-white/10 hover:text-white"
+            aria-live="polite"
+          >
+            {reported ? <Check className="h-3 w-3" aria-hidden /> : <Flag className="h-3 w-3" aria-hidden />}
             {reported ? t.admin.confirmed : t.player.reportVideo}
           </button>
-          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white" title={t.player.switchServer}>
-            <Warehouse className="h-4 w-4" aria-hidden />
-          </span>
         </div>
       </div>
       <CommentsSection target={`watch:${anime.slug}:${num}`} dict={t} title={t.player.commentsHere} />

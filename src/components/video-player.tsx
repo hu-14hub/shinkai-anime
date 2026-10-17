@@ -7,7 +7,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Download,
   Gauge,
+  HardDrive,
   Loader2,
   Maximize,
   Minimize,
@@ -18,6 +20,7 @@ import {
   RotateCcw,
   SkipForward,
   Subtitles,
+  Users,
   Volume2,
   VolumeX,
   Warehouse,
@@ -58,6 +61,14 @@ function fmtSpeed(bps: number): string {
   return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[u]}`;
 }
 
+/** Human-readable byte count for the P2P HUD (B / KB / MB / GB). */
+function fmtBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  return `${(bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
 export interface VideoPlayerProps {
   sources: StreamingSource[];
   subtitles: SubtitleTrack[];
@@ -77,6 +88,15 @@ export interface VideoPlayerProps {
    * falls back to the HTTP sources above if the peer swarm is unavailable.
    */
   magnet?: string;
+  /**
+   * Id of the source currently selected in the external (watch-page) server
+   * pill list. When it changes, the player switches to that source so the
+   * two server selectors (in-player controls and watch-page pills) stay in
+   * sync even if the user switches inside the pill list.
+   */
+  requestedSourceId?: string;
+  /** Called when the in-player source control changes the active source. */
+  onSourceChange?: (id: string) => void;
   /** Client-side navigation handlers (optional). */
   onNext?: () => void;
   onPrev?: () => void;
@@ -101,6 +121,8 @@ export function VideoPlayer({
   hasPrev,
   fillerEpisodes = [],
   magnet,
+  requestedSourceId,
+  onSourceChange,
   onNext,
   onPrev,
 }: VideoPlayerProps) {
@@ -137,29 +159,113 @@ export function VideoPlayer({
   /* WebTorrent P2P engine                                             */
   /* ---------------------------------------------------------------- */
   const wt = useWebTorrent();
-  const p2pActive = !!magnet && wt.status !== "error";
+  // P2P is "active" only while the selected source actually carries a magnet
+  // link and the P2P engine has not entered an error state. This keeps the
+  // <video> element owned by exactly one engine at a time.
+  const p2pSource = magnet;
+  const p2pActive = !!p2pSource && wt.status !== "error";
 
   /**
-   * Prefer the P2P route whenever a magnet is supplied. On any P2P error
-   * (no peers, no video file, unsupported SW, etc.) the `p2pActive`
-   * derivation above immediately collapses to `false` and the HLS engine
+   * Keep the internal `srcIndex` in sync with the external server pill list
+   * (`requestedSourceId`). This is what makes the watch-page pills actually
+   * switch the active stream — picking "P2P (WebTorrent)" changes this id,
+   * which flips `p2pSource` on, which hands the <video> to WebTorrent.
+   */
+  useEffect(() => {
+    if (!requestedSourceId) return;
+    const idx = sources.findIndex((s) => s.id === requestedSourceId);
+    if (idx >= 0 && idx !== srcIndex) setSrcIndex(idx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedSourceId]);
+
+  /**
+   * Prefer the P2P route whenever the active source carries a magnet. On
+   * any P2P error (no peers, no video file, unsupported SW, etc.) the
+   * `p2pActive` derivation collapses to `false` and the HLS engine below
    * takes over transparently.
    */
   useEffect(() => {
-    if (!magnet) return;
+    if (!p2pSource) {
+      // No magnet on the active source — make sure we have stopped P2P.
+      wt.stop();
+      return;
+    }
     const video = videoRef.current;
     if (!video) return;
-    let cancelled = false;
-    if (cancelled) return;
-    wt.load(magnet, video).catch(() => {
+    wt.load(p2pSource, video).catch(() => {
       /* hook already sets wt.status = "error"; HLS takes over */
     });
     return () => {
-      cancelled = true;
       wt.stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [magnet]);
+  }, [p2pSource]);
+
+  /**
+   * Auto-fallback: if we're on a P2P source but P2P dropped into an error
+   * (swarm dead / no video file / …), jump to the first non-P2P source so
+   * playback continues seamlessly. Guarded so it never loops while the user
+   * is intentionally on an HLS source.
+   */
+  useEffect(() => {
+    if (!source?.magnet || wt.status !== "error") return;
+    const fallback = sources.find((s) => !s.magnet);
+    if (!fallback) return;
+    const fallbackIdx = sources.findIndex((s) => s.id === fallback.id);
+    if (fallbackIdx >= 0 && fallbackIdx !== srcIndex) setSrcIndex(fallbackIdx);
+    // Notify the parent so the server pills re-highlight the HLS source and
+    // stop pushing us back to the dead P2P source (prevents toggle loop).
+    if (onSourceChange && fallback.id !== requestedSourceId) onSourceChange(fallback.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wt.status]);
+
+  /**
+   * Wire WebTorrent download progress into the player's `buffered` state.
+   * While P2P is healthy we approximate how far ahead of the playhead we can
+   * seek: `fileProgress` (0..1 of the selected file) mapped onto the media
+   * `duration`. In the progressive `file.streamTo` path the Media Source is
+   * range-addressable so the `<video>`'s own buffered ranges are unreliable
+   * here — the torrent byte progress is the source of truth.
+   */
+  useEffect(() => {
+    if (p2pActive) {
+      setBuffered(duration > 0 ? wt.fileProgress * duration : 0);
+    } else {
+      // Back to HTTP playback — reset to 0; the buffered ranges below manage
+      // themselves from the <video> element.
+      const video = videoRef.current;
+      let end = 0;
+      if (video?.buffered?.length) {
+        for (let i = 0; i < video.buffered.length; i += 1) {
+          if (video.currentTime >= video.buffered.start(i) && video.currentTime <= video.buffered.end(i)) {
+            end = video.buffered.end(i);
+          }
+        }
+      }
+      setBuffered(end);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wt.fileProgress, duration, p2pActive]);
+
+  /* Track native buffered extent as a fallback / for the HTTP path. */
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const onTime = () => {
+      if (p2pActive) return; // P2P manages `buffered` itself
+      let end = 0;
+      if (video.buffered?.length) {
+        for (let i = 0; i < video.buffered.length; i += 1) {
+          if (video.currentTime >= video.buffered.start(i) && video.currentTime <= video.buffered.end(i)) {
+            end = video.buffered.end(i);
+          }
+        }
+      }
+      setBuffered(end);
+    };
+    video.addEventListener("timeupdate", onTime);
+    return () => video.removeEventListener("timeupdate", onTime);
+  }, [p2pActive]);
 
   /* ---------------------------------------------------------------- */
   /* HLS engine                                                        */
@@ -548,30 +654,78 @@ export function VideoPlayer({
         {/* P2P status badge — top-center, self-contained pill */}
         {p2pActive && (
           <div
-            className={cn(
-              "absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[11px] font-semibold tabular-nums shadow-lg shadow-black/40 backdrop-blur-md",
-              wt.status === "ready"
-                ? "bg-white/95 text-neutral-950"
-                : "bg-black/60 text-white"
-            )}
+            className="absolute top-3 left-1/2 z-30 w-[min(92%,660px)] -translate-x-1/2 rounded-2xl border border-white/10 bg-black/60 px-3 py-2.5 shadow-2xl shadow-black/50 backdrop-blur-xl sm:px-4"
             role="status"
             aria-live="polite"
           >
-            {wt.status === "ready" ? (
-              <Radio className="h-3.5 w-3.5 shrink-0 text-emerald-500" aria-hidden />
-            ) : (
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-brand" aria-hidden />
-            )}
-            <span dir="ltr">
-              {wt.status === "connecting" &&
-                (wt.peers > 0
-                  ? `P2P · ${wt.peers} peer${wt.peers === 1 ? "" : "s"}`
-                  : "P2P · Waiting for peers…")}
-              {wt.status === "downloading" &&
-                `P2P · ${wt.peers} peer${wt.peers === 1 ? "" : "s"} · ${fmtSpeed(wt.downloadSpeed)} · ${Math.round(wt.fileProgress * 100)}%`}
-              {wt.status === "ready" &&
-                `P2P · ${wt.peers} peer${wt.peers === 1 ? "" : "s"} · ${wt.strategy === "stream" ? "Streaming" : "Ready"}`}
-            </span>
+            {/* Header: P2P/WebTorrent badge + live state pill */}
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                {wt.status === "ready" ? (
+                  <Radio className="h-4 w-4 shrink-0 text-emerald-400" aria-hidden />
+                ) : (
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand" aria-hidden />
+                )}
+                <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-white">
+                  P2P
+                  <span className="text-neutral-500">/</span>
+                  <span className="text-brand-300">WebTorrent</span>
+                </span>
+                <span className="ml-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-neutral-300">
+                  {wt.status === "ready"
+                    ? wt.strategy === "stream"
+                      ? "Streaming"
+                      : "Live"
+                    : wt.status === "connecting"
+                      ? "Connecting"
+                      : "Downloading"}
+                </span>
+              </div>
+              <span dir="ltr" className="hidden truncate text-[11px] font-medium tabular-nums text-neutral-500 sm:inline">
+                {wt.status === "connecting"
+                  ? wt.peers > 0
+                    ? `${wt.peers} peer${wt.peers === 1 ? "" : "s"} found`
+                    : "Searching swarm…"
+                  : wt.fileName}
+              </span>
+            </div>
+
+            {/* Live metrics: peers · speed · downloaded/total */}
+            <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 sm:gap-x-4">
+              <div className="flex items-center gap-1.5" title="Active peers">
+                <Users className="h-3.5 w-3.5 text-neutral-400" aria-hidden />
+                <span dir="ltr" className="text-[11px] font-semibold tabular-nums text-white">
+                  {wt.peers}
+                </span>
+                <span className="text-[10px] text-neutral-500">peers</span>
+              </div>
+              <div className="flex items-center gap-1.5" title="Download speed">
+                <Download className="h-3.5 w-3.5 text-neutral-400" aria-hidden />
+                <span dir="ltr" className="text-[11px] font-semibold tabular-nums text-white">
+                  {fmtSpeed(wt.downloadSpeed)}
+                  <span className="text-neutral-500">/s</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5" title="Downloaded / Total size">
+                <HardDrive className="h-3.5 w-3.5 text-neutral-400" aria-hidden />
+                <span dir="ltr" className="text-[11px] font-semibold tabular-nums text-white">
+                  {fmtBytes(wt.fileDownloaded)}
+                  <span className="text-neutral-500"> / </span>
+                  {wt.fileLength > 0 ? fmtBytes(wt.fileLength) : "—"}
+                </span>
+              </div>
+              <div className="ml-auto text-[11px] font-bold tabular-nums text-brand-300">
+                <span dir="ltr">{Math.round(wt.fileProgress * 100)}%</span>
+              </div>
+            </div>
+
+            {/* Live buffer/progress bar (driven by WebTorrent file progress) */}
+            <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-white/10">
+              <div
+                className="h-full bg-gradient-to-r from-brand to-emerald-400 transition-[width] duration-500 ease-out"
+                style={{ width: `${Math.min(100, Math.max(0, bufferedPct))}%` }}
+              />
+            </div>
           </div>
         )}
 

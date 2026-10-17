@@ -36,6 +36,10 @@ export interface WebTorrentInfo {
   downloadSpeed: number;
   /** 0..1 progress of the selected video file. */
   fileProgress: number;
+  /** Total size of the selected video file in bytes (0 when unknown). */
+  fileLength: number;
+  /** Bytes of the selected video file downloaded so far. */
+  fileDownloaded: number;
   /** Name of the selected video file ("" when unknown). */
   fileName: string;
   /** Which strategy produced the <video> src once `status === "ready"`. */
@@ -216,12 +220,28 @@ function readProgress(f: TorrentFile | null | undefined): number {
     return 0;
   }
 }
+function readLength(f: TorrentFile | null | undefined): number {
+  try {
+    return f ? f.length : 0;
+  } catch {
+    return 0;
+  }
+}
+function readDownloaded(f: TorrentFile | null | undefined): number {
+  try {
+    return f ? f.downloaded : 0;
+  } catch {
+    return 0;
+  }
+}
 export function useWebTorrent(): UseWebTorrentResult {
   const [status, setStatus] = useState<WebTorrentStatus>("idle");
   const [error, setError] = useState<string | undefined>(undefined);
   const [peers, setPeers] = useState(0);
   const [downloadSpeed, setDownloadSpeed] = useState(0);
   const [fileProgress, setFileProgress] = useState(0);
+  const [fileLength, setFileLength] = useState(0);
+  const [fileDownloaded, setFileDownloaded] = useState(0);
   const [fileName, setFileName] = useState("");
   const [strategy, setStrategy] = useState<"stream" | "blob" | undefined>(
     undefined
@@ -243,11 +263,17 @@ export function useWebTorrent(): UseWebTorrentResult {
   const startStats = useCallback(
     (torrent: Torrent, file: TorrentFile | null, session: number) => {
       stopStats();
+      // Prime synchronous metrics on the first tick so the HUD has data
+      // immediately rather than waiting for the first interval fire.
+      setFileLength(readLength(file));
+      setFileDownloaded(readDownloaded(file));
       statsTimerRef.current = setInterval(() => {
         if (sessionRef.current !== session) return stopStats();
         setPeers(readPeers(torrent));
         setDownloadSpeed(readSpeed(torrent));
         setFileProgress(readProgress(file));
+        setFileLength(readLength(file));
+        setFileDownloaded(readDownloaded(file));
       }, 1000);
     },
     [stopStats]
@@ -285,6 +311,8 @@ const load = useCallback(
       setPeers(0);
       setDownloadSpeed(0);
       setFileProgress(0);
+      setFileLength(0);
+      setFileDownloaded(0);
       setFileName("");
       setStrategy(undefined);
 
@@ -443,6 +471,8 @@ const stop = useCallback(() => {
     setPeers(0);
     setDownloadSpeed(0);
     setFileProgress(0);
+    setFileLength(0);
+    setFileDownloaded(0);
     setFileName("");
     setStrategy(undefined);
   }, [teardown]);
@@ -486,6 +516,8 @@ const stop = useCallback(() => {
     peers,
     downloadSpeed,
     fileProgress,
+    fileLength,
+    fileDownloaded,
     fileName,
     strategy,
     load,
