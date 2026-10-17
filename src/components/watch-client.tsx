@@ -44,7 +44,49 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
   const activeSource: StreamingSource | undefined = stream.sources.find(
     (s) => s.id === activeSourceId
   );
-  const activeMagnet = activeSource?.magnet;
+  // The P2P slot is identified positionally (it is the source carrying a
+  // magnet) so this keeps working even if the source id changes.
+  const p2pSource = stream.sources.find(
+    (s) => s.id === "p2p" || !!s.magnet || s.quality === "P2P"
+  );
+  const p2pActive = !!p2pSource && activeSource === p2pSource;
+
+  // Live P2P magnet resolved at runtime via /api/p2p-source (real Nyaa feed);
+  // it layers over the server-rendered CC0 demo magnet. A null result keeps the
+  // demo magnet (offline / no-match fallback).
+  const [liveP2p, setLiveP2p] = useState<{
+    magnet: string;
+    live: boolean;
+  } | null>(null);
+
+  // Resolve a live magnet only while the P2P pill is the active selection, so
+  // we don't hammer the torrent index until it's actually needed.
+  useEffect(() => {
+    if (!p2pSource) {
+      setLiveP2p(null);
+      return;
+    }
+    let cancelled = false;
+    setLiveP2p(null);
+    const qs = new URLSearchParams({ q: anime.title.en, ep: String(num), slug });
+    fetch(`/api/p2p-source?${qs.toString()}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data || typeof data.magnet !== "string") return;
+        setLiveP2p({ magnet: data.magnet, live: data.source === "nyaa" });
+      })
+      .catch(() => {
+        /* keep the demo magnet */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug, num, p2pActive, anime.title.en]);
+
+  const activeMagnet = p2pActive
+    ? liveP2p?.magnet ?? activeSource?.magnet
+    : undefined;
 
   const report = () => {
     addReport({ slug, targetType: "video", targetId: `${slug}-ep-${num}`, reason: "Broken video source" });
@@ -58,6 +100,7 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
   const renderPill = (s: StreamingSource) => {
     const isActive = s.id === activeSourceId;
     const isP2P = s.id === "p2p" || !!s.magnet;
+    const live = isP2P && p2pActive && !!liveP2p?.live;
     return (
       <button
         key={s.id}
@@ -86,6 +129,19 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
         <span dir="ltr" className="rounded-full bg-black/10 px-1.5 py-0.5 text-[10px] font-semibold">
           {s.quality}
         </span>
+        {isP2P && (
+          <span
+            dir="ltr"
+            className={cn(
+              "rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider",
+              live
+                ? "bg-emerald-400 text-neutral-950"
+                : "bg-amber-400/15 text-amber-300 ring-1 ring-amber-400/30"
+            )}
+          >
+            {live ? t.watch.p2pLive : t.watch.p2pDemo}
+          </span>
+        )}
         {isActive && <Check className="h-3 w-3" aria-hidden />}
       </button>
     );

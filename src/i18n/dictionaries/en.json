@@ -104,7 +104,9 @@
     "postComment": "Post",
     "backToDetails": "Back to Details",
     "nowPlaying": "Now Playing",
-    "fillerNote": "Note: this episode is filler."
+    "fillerNote": "Note: this episode is filler.",
+    "p2pLive": "Live",
+    "p2pDemo": "Fallback"
   },
   "browse": {
     "title": "Browse Anime",
