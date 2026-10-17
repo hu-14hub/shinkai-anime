@@ -38,6 +38,7 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
           poster={anime.banner}
           epTitle={current.title[locale]}
           dict={t}
+          magnet={stream.magnet}
           hasNext={hasNext}
           hasPrev={hasPrev}
           fillerEpisodes={anime.episodes.filter((e) => e.isFiller).map((e) => e.number)}

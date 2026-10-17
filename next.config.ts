@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  serverExternalPackages: ["webtorrent", "node-datachannel"],
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "picsum.photos" },

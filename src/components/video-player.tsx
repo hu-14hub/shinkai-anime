@@ -14,6 +14,7 @@ import {
   Pause,
   PictureInPicture2,
   Play,
+  Radio,
   RotateCcw,
   SkipForward,
   Subtitles,
@@ -27,6 +28,7 @@ import type { StreamingSource, SubtitleTrack } from "@/types";
 import { getProgress, saveProgress } from "@/lib/library";
 import { getSettings } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { useWebTorrent } from "@/lib/webtorrent-client";
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 /** Seconds of the head/tail treated as intro / outro skip windows. */
@@ -43,6 +45,19 @@ function fmt(sec: number): string {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
+/** Human-readable bytes-per-second for the P2P stats badge. */
+function fmtSpeed(bps: number): string {
+  if (!Number.isFinite(bps) || bps <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let v = bps;
+  let u = 0;
+  while (v >= 1024 && u < units.length - 1) {
+    v /= 1024;
+    u += 1;
+  }
+  return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[u]}`;
+}
+
 export interface VideoPlayerProps {
   sources: StreamingSource[];
   subtitles: SubtitleTrack[];
@@ -56,6 +71,12 @@ export interface VideoPlayerProps {
   hasPrev: boolean;
   /** Set of episode numbers marked as filler (drives badge/notice in the player). */
   fillerEpisodes?: number[];
+  /**
+   * Optional BitTorrent magnet link (or `file://` / torrent-file URL). When
+   * provided, playback prefers a WebTorrent P2P source and transparently
+   * falls back to the HTTP sources above if the peer swarm is unavailable.
+   */
+  magnet?: string;
   /** Client-side navigation handlers (optional). */
   onNext?: () => void;
   onPrev?: () => void;
@@ -79,6 +100,7 @@ export function VideoPlayer({
   hasNext,
   hasPrev,
   fillerEpisodes = [],
+  magnet,
   onNext,
   onPrev,
 }: VideoPlayerProps) {
@@ -112,10 +134,42 @@ export function VideoPlayer({
   const settings = useMemo(() => getSettings(), []);
 
   /* ---------------------------------------------------------------- */
+  /* WebTorrent P2P engine                                             */
+  /* ---------------------------------------------------------------- */
+  const wt = useWebTorrent();
+  const p2pActive = !!magnet && wt.status !== "error";
+
+  /**
+   * Prefer the P2P route whenever a magnet is supplied. On any P2P error
+   * (no peers, no video file, unsupported SW, etc.) the `p2pActive`
+   * derivation above immediately collapses to `false` and the HLS engine
+   * takes over transparently.
+   */
+  useEffect(() => {
+    if (!magnet) return;
+    const video = videoRef.current;
+    if (!video) return;
+    let cancelled = false;
+    if (cancelled) return;
+    wt.load(magnet, video).catch(() => {
+      /* hook already sets wt.status = "error"; HLS takes over */
+    });
+    return () => {
+      cancelled = true;
+      wt.stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [magnet]);
+
+  /* ---------------------------------------------------------------- */
   /* HLS engine                                                        */
   /* ---------------------------------------------------------------- */
   useEffect(() => {
     const video = videoRef.current;
+    // P2P owns the <video> while it is healthy (magnet present and not in an
+    // error state). When P2P errors, `p2pActive` flips to false and this
+    // effect re-runs, handing the element back to the HLS engine.
+    if (p2pActive) return;
     if (!video || !source) return;
     setError(false);
     setLoading(true);
@@ -165,7 +219,7 @@ export function VideoPlayer({
       hls?.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source?.url, slug, episode]);
+  }, [source, settings, p2pActive, slug, episode]);
 
   /* ---------------------------------------------------------------- */
   /* Media element events                                               */
@@ -491,10 +545,49 @@ export function VideoPlayer({
           )}
         </video>
 
+        {/* P2P status badge — top-center, self-contained pill */}
+        {p2pActive && (
+          <div
+            className={cn(
+              "absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[11px] font-semibold tabular-nums shadow-lg shadow-black/40 backdrop-blur-md",
+              wt.status === "ready"
+                ? "bg-white/95 text-neutral-950"
+                : "bg-black/60 text-white"
+            )}
+            role="status"
+            aria-live="polite"
+          >
+            {wt.status === "ready" ? (
+              <Radio className="h-3.5 w-3.5 shrink-0 text-emerald-500" aria-hidden />
+            ) : (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-brand" aria-hidden />
+            )}
+            <span dir="ltr">
+              {wt.status === "connecting" &&
+                (wt.peers > 0
+                  ? `P2P · ${wt.peers} peer${wt.peers === 1 ? "" : "s"}`
+                  : "P2P · Waiting for peers…")}
+              {wt.status === "downloading" &&
+                `P2P · ${wt.peers} peer${wt.peers === 1 ? "" : "s"} · ${fmtSpeed(wt.downloadSpeed)} · ${Math.round(wt.fileProgress * 100)}%`}
+              {wt.status === "ready" &&
+                `P2P · ${wt.peers} peer${wt.peers === 1 ? "" : "s"} · ${wt.strategy === "stream" ? "Streaming" : "Ready"}`}
+            </span>
+          </div>
+        )}
+
         {/* Loading overlay */}
-        {loading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10">
-            <Loader2 className="h-8 w-8 animate-spin text-brand" />
+        {(loading || (p2pActive && wt.status !== "ready")) && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10 pointer-events-none">
+            <div className="flex flex-col items-center gap-3">
+              <Loader2 className="h-8 w-8 animate-spin text-brand" />
+              {p2pActive && (
+                <span className="text-xs font-medium text-neutral-300" dir="rtl">
+                  {wt.status === "connecting"
+                    ? "جارٍ الاتصال بالشبكة…"
+                    : `جارٍ التحميل عبر P2P — ${Math.round(wt.fileProgress * 100)}%`}
+                </span>
+              )}
+            </div>
           </div>
         )}
 
@@ -710,33 +803,37 @@ export function VideoPlayer({
               <span className="sr-only">{dict.player.speed}</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => togglePanel("quality")}
-              className={cn(
-                "flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition",
-                panel === "quality" && "bg-brand text-neutral-950"
-              )}
-              aria-label={dict.player.quality}
-              aria-expanded={panel === "quality"}
-            >
-              <Warehouse className="h-4 w-4" aria-hidden />
-              <span className="sr-only">{dict.player.quality}</span>
-            </button>
+            {!p2pActive && (
+              <button
+                type="button"
+                onClick={() => togglePanel("quality")}
+                className={cn(
+                  "flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition",
+                  panel === "quality" && "bg-brand text-neutral-950"
+                )}
+                aria-label={dict.player.quality}
+                aria-expanded={panel === "quality"}
+              >
+                <Warehouse className="h-4 w-4" aria-hidden />
+                <span className="sr-only">{dict.player.quality}</span>
+              </button>
+            )}
 
-            <button
-              type="button"
-              onClick={() => togglePanel("subs")}
-              className={cn(
-                "flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition",
-                panel === "subs" && "bg-brand text-neutral-950"
-              )}
-              aria-label={dict.player.subtitles}
-              aria-expanded={panel === "subs"}
-            >
-              <Subtitles className="h-4 w-4" aria-hidden />
-              <span className="sr-only">{dict.player.subtitles}</span>
-            </button>
+            {!p2pActive && (
+              <button
+                type="button"
+                onClick={() => togglePanel("subs")}
+                className={cn(
+                  "flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition",
+                  panel === "subs" && "bg-brand text-neutral-950"
+                )}
+                aria-label={dict.player.subtitles}
+                aria-expanded={panel === "subs"}
+              >
+                <Subtitles className="h-4 w-4" aria-hidden />
+                <span className="sr-only">{dict.player.subtitles}</span>
+              </button>
+            )}
 
             <button
               type="button"

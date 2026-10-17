@@ -129,6 +129,12 @@ export interface EpisodeStream {
   episode: number;
   sources: StreamingSource[];
   subtitles: SubtitleTrack[];
+  /**
+   * Optional WebTorrent magnet link (or .torrent URL / info-hash) that the
+   * video player will prefer over `sources` when present. When the P2P path
+   * fails, the player transparently falls back to the HLS/MP4 sources.
+   */
+  magnet?: string;
 }
 
 /* ------------------------------------------------------------------ */
