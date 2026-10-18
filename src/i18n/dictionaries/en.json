@@ -312,7 +312,9 @@
     "subSaved": "Default subtitle saved",
     "commentsHere": "Discuss this episode",
     "theaterOn": "Theater mode on",
-    "connecting": "Connecting…"
+    "connecting": "Connecting…",
+    "noSources": "No sources available",
+    "noSourcesMsg": "No playable stream was found for this episode. Check your connection and try again."
   },
   "schedule": {
     "title": "Weekly Schedule",

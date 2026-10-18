@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { AlertIcon, ClockIcon, PlayIcon, RetryIcon } from "./player-icons";
+import { AlertIcon, ClockIcon, PlayIcon, RetryIcon, ServerIcon } from "./player-icons";
 
 /**
  * Transparent edge scrim used for legibility behind the title (top) and the
@@ -61,9 +61,20 @@ interface ErrorOverlayProps {
   message: string;
   retry: string;
   onRetry: () => void;
+  /** Optional secondary action (e.g. switch to a different source). */
+  secondaryLabel?: string;
+  onSecondary?: () => void;
 }
 
-export function ErrorOverlay({ show, title, message, retry, onRetry }: ErrorOverlayProps) {
+export function ErrorOverlay({
+  show,
+  title,
+  message,
+  retry,
+  onRetry,
+  secondaryLabel,
+  onSecondary,
+}: ErrorOverlayProps) {
   if (!show) return null;
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/60 p-6 backdrop-blur-md">
@@ -71,6 +82,51 @@ export function ErrorOverlay({ show, title, message, retry, onRetry }: ErrorOver
         <div className="relative mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-red-500/10 ring-1 ring-red-500/25">
           <div className="absolute -inset-2 -z-10 rounded-full bg-red-500/20 blur-lg" />
           <AlertIcon size={26} className="text-red-300" />
+        </div>
+        <h3 className="text-lg font-bold tracking-tight text-white">{title}</h3>
+        <p className="mt-1.5 text-sm text-neutral-400">{message}</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-6 flex items-center gap-2 rounded-full bg-brand px-6 py-2.5 text-sm font-bold text-neutral-950 shadow-lg shadow-brand/30 transition-all duration-300 hover:scale-[1.03] hover:bg-brand-300 hover:drop-shadow-[0_0_14px_rgba(6,182,212,0.55)]"
+        >
+          <RetryIcon size={16} />
+          {retry}
+        </button>
+        {secondaryLabel && onSecondary && (
+          <button
+            type="button"
+            onClick={onSecondary}
+            className="mt-3 text-xs font-semibold text-neutral-400 underline-offset-4 transition-colors duration-300 hover:text-white hover:underline"
+          >
+            {secondaryLabel}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface NoSourcesOverlayProps {
+  show: boolean;
+  title: string;
+  message: string;
+  retry: string;
+  onRetry: () => void;
+}
+
+/**
+ * Friendly, non-alarming state shown when zero playable sources could be
+ * resolved for the episode — instead of flashing a broken/error player.
+ */
+export function NoSourcesOverlay({ show, title, message, retry, onRetry }: NoSourcesOverlayProps) {
+  if (!show) return null;
+  return (
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/70 p-6 backdrop-blur-md">
+      <div className="animate-player-pop flex max-w-sm flex-col items-center rounded-2xl border border-white/10 bg-white/[0.05] px-8 py-9 text-center shadow-2xl shadow-black/60 ring-1 ring-white/5">
+        <div className="relative mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-white/5 ring-1 ring-white/15">
+          <div className="absolute -inset-2 -z-10 rounded-full bg-white/5 blur-lg" />
+          <ServerIcon size={26} className="text-neutral-300" />
         </div>
         <h3 className="text-lg font-bold tracking-tight text-white">{title}</h3>
         <p className="mt-1.5 text-sm text-neutral-400">{message}</p>

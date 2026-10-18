@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Hls from "hls.js";
+import type { LoadPolicy } from "hls.js";
 import type { Dictionary } from "@/i18n/get-dictionary";
 import type { StreamingSource, SubtitleTrack } from "@/types";
 import { getProgress, saveProgress } from "@/lib/library";
@@ -35,6 +36,7 @@ import {
   FillerBadge,
   LiveDot,
   LoadingOverlay,
+  NoSourcesOverlay,
   ResumeChip,
   Scrim,
   SkipButtons,
@@ -46,6 +48,21 @@ const AUTOHIDE_MS = 2600;
 /* Seconds of the head/tail treated as intro / outro skip windows. */
 const INTRO_WINDOW = 90;
 const OUTRO_WINDOW = 90;
+
+/**
+ * Hls.js per-request retry policy. Network errors (transient timeout /
+ * dropped segment) are retried a few times with backoff before surfacing the
+ * error state, so a single flaky segment doesn't immediately break playback.
+ * `LoadPolicy` is shaped as `{ default: RetryConfig }` in hls.js v1.7+.
+ */
+const HLS_LOAD_POLICY: LoadPolicy = {
+  default: {
+    maxTimeToFirstByteMs: 20000,
+    maxLoadTimeMs: 120000,
+    timeoutRetry: { maxNumRetry: 2, retryDelayMs: 1000, maxRetryDelayMs: 4000, backoff: "exponential" },
+    errorRetry: { maxNumRetry: 3, retryDelayMs: 1000, maxRetryDelayMs: 8000, backoff: "exponential" },
+  },
+};
 
 function fmt(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return "0:00";
@@ -79,6 +96,12 @@ export interface VideoPlayerProps {
   /** Client-side navigation handlers (optional). */
   onNext?: () => void;
   onPrev?: () => void;
+  /**
+   * Re-trigger the watch page's live source fetch (re-calls /api/stream).
+   * Wired to the "Retry" / "No sources" overlay so the user can pull fresh
+   * sources after a failure or when none were resolved initially.
+   */
+  onRetryStream?: () => void;
 }
 
 /**
@@ -103,6 +126,7 @@ export function VideoPlayer({
   requestedSourceId,
   onNext,
   onPrev,
+  onRetryStream,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -130,6 +154,8 @@ export function VideoPlayer({
   const [showControls, setShowControls] = useState(true);
   const [resumeAt, setResumeAt] = useState<number | null>(null);
   const [nextCountdown, setNextCountdown] = useState<number | null>(null);
+  // Bump to force the load effect to run again (Retry button / recover).
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const resumeRef = useRef(resumeAt);
   useEffect(() => {
     resumeRef.current = resumeAt;
@@ -195,8 +221,20 @@ export function VideoPlayer({
     };
     video.addEventListener("loadedmetadata", onMeta);
 
+    // Native <video> error handling (Safari HLS / progressive fallback path).
+    const onVideoError = () => {
+      setError(true);
+      setLoading(false);
+    };
+
     if (isHls && Hls.isSupported()) {
-      hls = new Hls({ enableWorker: true });
+      hls = new Hls({
+        enableWorker: true,
+        manifestLoadPolicy: HLS_LOAD_POLICY,
+        playlistLoadPolicy: HLS_LOAD_POLICY,
+        fragLoadPolicy: HLS_LOAD_POLICY,
+        keyLoadPolicy: HLS_LOAD_POLICY,
+      });
       hls.loadSource(source.url);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, (_e, data) => {
@@ -209,23 +247,35 @@ export function VideoPlayer({
         );
       });
       hls.on(Hls.Events.ERROR, (_e, data) => {
-        if (data.fatal) {
-          setError(true);
-          setLoading(false);
+        if (!data.fatal) return;
+        // Media errors are usually transient (codec/audio) — let hls.js recover.
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          hls?.recoverMediaError();
+          return;
         }
+        // Network error persists after internal retries — tear down so a manual
+        // Retry cleanly rebuilds, then surface the error + retry UI.
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          hls?.destroy();
+          hls = null;
+        }
+        setError(true);
+        setLoading(false);
       });
     } else {
       // Native HLS (Safari) or progressive fallback.
+      video.addEventListener("error", onVideoError);
       video.src = source.url;
       video.load();
     }
 
     return () => {
       video.removeEventListener("loadedmetadata", onMeta);
+      video.removeEventListener("error", onVideoError);
       hls?.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, settings, slug, episode]);
+  }, [source, settings, slug, episode, loadAttempt]);
 
   /* ---------------------------------------------------------------- */
   /* Media element events                                               */
@@ -455,6 +505,36 @@ export function VideoPlayer({
     video.paused ? video.play() : video.pause();
   };
 
+  /**
+   * Primary retry: re-runs the load effect for the current source, then asks
+   * the watch page to re-fetch fresh live sources (which will re-trigger the
+   * effect again when the sources array changes).
+   */
+  const handleRetry = () => {
+    setError(false);
+    setLoading(true);
+    setLoadAttempt((a) => a + 1);
+    onRetryStream?.();
+  };
+
+  /**
+   * Secondary action: switch to the next server in the pill list AND re-run
+   * the load effect so the new source takes effect immediately (the external
+   * sync effect would only update `requestedSourceId`, which changes `sources`
+   * in the same render cycle — we explicitly bump loadAttempt to be safe).
+   */
+  const handleNextSource = () => {
+    if (sources.length <= 1) {
+      handleRetry();
+      return;
+    }
+    setError(false);
+    setLoading(true);
+    setSrcIndex((i) => (i + 1) % sources.length);
+    setLoadAttempt((a) => a + 1);
+    onRetryStream?.();
+  };
+
   const seek = (delta: number) => {
     const video = videoRef.current;
     if (!video) return;
@@ -545,6 +625,9 @@ export function VideoPlayer({
     remaining <= OUTRO_WINDOW && remaining > 0 && duration > OUTRO_WINDOW;
   const defaultSub = subtitles.find((t) => t.default);
   const activeSub = selectedSub === "off" ? null : subtitles.find((t) => t.id === selectedSub);
+  // Distinct "nothing to play" state: zero sources resolved (live + fallback
+  // both empty). Shown with a friendly message + retry instead of an error.
+  const noSources = sources.length === 0;
 
   /* Apply speed / subtitles to video element */
   useEffect(() => {
@@ -596,21 +679,28 @@ export function VideoPlayer({
         <Scrim side="top" hidden={!showControls} />
         <Scrim side="bottom" hidden={!showControls} />
 
-        <LoadingOverlay show={loading} />
+        <LoadingOverlay show={loading && !noSources} />
+
+        <NoSourcesOverlay
+          show={noSources}
+          title={dict.player.noSources}
+          message={dict.player.noSourcesMsg}
+          retry={dict.common.retry}
+          onRetry={handleRetry}
+        />
 
         <ErrorOverlay
-          show={error}
+          show={error && !noSources}
           title={dict.common.error}
           message={dict.player.error}
           retry={dict.common.retry}
-          onRetry={() => {
-            setError(false);
-            setLoading(true);
-          }}
+          onRetry={handleRetry}
+          secondaryLabel={sources.length > 1 ? dict.player.switchServer : undefined}
+          onSecondary={handleNextSource}
         />
 
         <CenterPlayButton
-          show={!playing && !loading && !error}
+          show={!playing && !loading && !error && !noSources}
           label={dict.player.play}
           onClick={togglePlay}
         />

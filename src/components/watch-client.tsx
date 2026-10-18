@@ -33,6 +33,12 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
   const [activeSourceId, setActiveSourceId] = useState<string>(
     () => stream.sources.find((s) => s.default)?.id ?? stream.sources[0]?.id ?? ""
   );
+  // Bump to force the live source fetch to re-run (Retry button in the player).
+  const [refreshKey, setRefreshKey] = useState(0);
+  const retryStream = () => {
+    setLiveStream(null); // clear any stale live sources so the effect re-runs
+    setRefreshKey((k) => k + 1);
+  };
 
   // Reset the active pill to the SSR default when the episode changes (before
   // the live fetch resolves) so something valid is always selected.
@@ -71,7 +77,7 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
         if (!controller.signal.aborted) setStreamLoading(false);
       });
     return () => controller.abort();
-  }, [slug, num, anime.title.en]);
+  }, [slug, num, anime.title.en, refreshKey]);
 
   const current = anime.episodes[num - 1];
   const hasNext = num < anime.episodes.length;
@@ -137,6 +143,7 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
           fillerEpisodes={anime.episodes.filter((e) => e.isFiller).map((e) => e.number)}
           onNext={() => router.push(`/anime/${slug}/watch?ep=${num + 1}`)}
           onPrev={() => router.push(`/anime/${slug}/watch?ep=${num - 1}`)}
+          onRetryStream={retryStream}
         />
       </section>
 

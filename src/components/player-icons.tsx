@@ -186,3 +186,14 @@ export function XIcon({ size = 14, ...p }: IconProps) {
     </svg>
   );
 }
+
+/** Stacked "server / streaming source" glyph (matches the watch-page pills). */
+export function ServerIcon({ size = 20, ...p }: IconProps) {
+  return (
+    <svg {...base(size, p)}>
+      <rect x="3" y="4" width="18" height="7" rx="2" />
+      <rect x="3" y="13" width="18" height="7" rx="2" />
+      <path d="M7 7.5h.01M7 16.5h.01" />
+    </svg>
+  );
+}

@@ -1,20 +1,30 @@
 /**
  * Resolves playable sources + subtitle tracks for an episode.
  *
- * In this template there is no real video backend, so we synthesize demo
- * sources from public HLS test streams plus EN/AR WebVTT tracks. The admin
- * CRUD (AdminAnime.episodes[].sources/subtitles) is the integration point
- * for real server URLs — swap this function to read from your CMS/CDN.
+ * In this template there is no production video backend, so a reliable public
+ * HLS sample stream is used as the fallback when no live source can be
+ * resolved. The admin CRUD (AdminAnime.episodes[].sources/subtitles) is the
+ * integration point for real server URLs — swap `getEpisodeStream` to read
+ * from your CMS/CDN.
  */
 
 import type { EpisodeStream, StreamingSource, SubtitleTrack } from "@/types";
 
-const DEMO_M3U8 =
-  "https://test-vod.co.uk/hotel_california/Hotel_California_720p.m3u8";
-const DEMO_SUB_EN =
-  "https://test-vod.co.uk/hotel_california/subtitles_en.vtt";
-const DEMO_SUB_AR =
-  "https://test-vod.co.uk/hotel_california/subtitles_ar.vtt";
+/**
+ * Built-in public test HLS stream used when live (Consumet/GogoAnime)
+ * sources cannot be resolved.
+ *
+ * `test-streams.mux.dev/x36xhzz` is a well-known, long-running adaptive HLS
+ * sample (Big Buck Bunny) served with `Access-Control-Allow-Origin: *`, so it
+ * plays directly in the browser without a proxy. It is a valid *master*
+ * playlist, so hls.js auto-adapts across the encoded qualities.
+ *
+ * Override via `NEXT_PUBLIC_FALLBACK_HLS` in `.env.local` to point at any
+ * other publicly-reachable, CORS-friendly .m3u8.
+ */
+const FALLBACK_HLS =
+  process.env.NEXT_PUBLIC_FALLBACK_HLS ||
+  "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
 
 /** Map an episode to its streaming sources & subtitle tracks. */
 export function getEpisodeStream(
@@ -24,30 +34,18 @@ export function getEpisodeStream(
 ): EpisodeStream {
   const sources: StreamingSource[] = [
     {
-      id: "server-1",
-      name: "Server 1",
-      url: DEMO_M3U8,
-      quality: "720p",
+      id: "demo",
+      name: "Demo",
+      url: FALLBACK_HLS,
+      quality: "auto",
       default: true,
-    },
-    {
-      id: "server-2",
-      name: "Server 2",
-      url: DEMO_M3U8,
-      quality: "1080p",
-    },
-    {
-      id: "server-3",
-      name: "Server 3 (Mirror)",
-      url: DEMO_M3U8,
-      quality: "480p",
     },
   ];
 
-  const subtitles: SubtitleTrack[] = [
-    { id: "sub-en", label: "English", lang: "en", url: DEMO_SUB_EN, default: true },
-    { id: "sub-ar", label: "Arabic", lang: "ar", url: DEMO_SUB_AR },
-  ];
+  // No bundled subtitle tracks with the demo stream — the previously referenced
+  // host no longer resolves. Real subtitles are provided by the live resolver
+  // (`consumet.ts`) once it returns a track for the active source.
+  const subtitles: SubtitleTrack[] = [];
 
   return { slug, episode, sources, subtitles };
 }
