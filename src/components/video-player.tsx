@@ -670,8 +670,8 @@ export function VideoPlayer({
           preload="metadata"
           muted={muted || volume === 0}
         >
-          {source && (
-            <track kind="captions" src={activeSub?.url ?? ""} label={activeSub?.label ?? ""} />
+          {source && activeSub?.url && (
+            <track kind="captions" src={activeSub.url} label={activeSub.label} />
           )}
         </video>
 
