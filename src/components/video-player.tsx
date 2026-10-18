@@ -2,37 +2,50 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Hls from "hls.js";
-import {
-  AlertTriangle,
-  ChevronLeft,
-  ChevronRight,
-  Clock,
-  Gauge,
-  Loader2,
-  Maximize,
-  Minimize,
-  Pause,
-  PictureInPicture2,
-  Play,
-  RotateCcw,
-  SkipForward,
-  Subtitles,
-  Volume2,
-  VolumeX,
-  Warehouse,
-  X,
-} from "lucide-react";
 import type { Dictionary } from "@/i18n/get-dictionary";
 import type { StreamingSource, SubtitleTrack } from "@/types";
 import { getProgress, saveProgress } from "@/lib/library";
 import { getSettings } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import {
+  CheckIcon,
+  AlertIcon,
+  ClockIcon,
+  XIcon,
+  ExitFullscreenIcon,
+  ExitTheaterIcon,
+  FullscreenIcon,
+  PauseIcon,
+  PipIcon,
+  PlayIcon,
+  QualityIcon,
+  SpeedIcon,
+  SubtitlesIcon,
+  TheaterIcon,
+  VolumeHighIcon,
+  VolumeMuteIcon,
+} from "./player-icons";
+import { ProgressBar } from "./progress-bar";
+import {
+  AutoplayNextCounter,
+} from "./autoplay-next-countdown";
+import {
+  CenterPlayButton,
+  ErrorOverlay,
+  FillerBadge,
+  LiveDot,
+  LoadingOverlay,
+  ResumeChip,
+  Scrim,
+  SkipButtons,
+} from "./status-overlays";
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
-/** Seconds of the head/tail treated as intro / outro skip windows. */
+const AUTOHIDE_MS = 2600;
+
+/* Seconds of the head/tail treated as intro / outro skip windows. */
 const INTRO_WINDOW = 90;
 const OUTRO_WINDOW = 90;
-const AUTOHIDE_MS = 2600;
 
 function fmt(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return "0:00";
@@ -85,6 +98,7 @@ export function VideoPlayer({
   dict,
   hasNext,
   hasPrev,
+  totalEpisodes,
   fillerEpisodes = [],
   requestedSourceId,
   onNext,
@@ -93,6 +107,7 @@ export function VideoPlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastActivity = useRef(0);
 
   const [srcIndex, setSrcIndex] = useState(() =>
     Math.max(0, sources.findIndex((s) => s.default))
@@ -115,6 +130,10 @@ export function VideoPlayer({
   const [showControls, setShowControls] = useState(true);
   const [resumeAt, setResumeAt] = useState<number | null>(null);
   const [nextCountdown, setNextCountdown] = useState<number | null>(null);
+  const resumeRef = useRef(resumeAt);
+  useEffect(() => {
+    resumeRef.current = resumeAt;
+  }, [resumeAt]);
 
   const source = sources[srcIndex] ?? sources[0];
   const settings = useMemo(() => getSettings(), []);
@@ -442,6 +461,12 @@ export function VideoPlayer({
     video.currentTime = Math.min(Math.max(0, video.currentTime + delta), video.duration || 0);
   };
 
+  const seekTo = (time: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = Math.min(Math.max(0, time), video.duration || time);
+  };
+
   const skipTo = (position: "intro" | "outro") => {
     const video = videoRef.current;
     if (!video || !duration) return;
@@ -468,10 +493,52 @@ export function VideoPlayer({
   };
 
   /* ---------------------------------------------------------------- */
+  /* Auto-hide controls: fade after inactivity or when the cursor      */
+  /* leaves the player; any pointer move / touch / button re-arms it.   */
+  /* ---------------------------------------------------------------- */
+  const uiVisible = showControls || !!resumeAt || !!nextCountdown || !!panel;
+
+  const rearm = (force = false) => {
+    lastActivity.current = Date.now();
+    if (force && showControls) return;
+    setShowControls(true);
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setShowControls(false), AUTOHIDE_MS);
+  };
+
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const onPointerMove = () => {
+      if (Date.now() - lastActivity.current < 400) return;
+      rearm();
+    };
+    const onLeave = () => {
+      // Only hide when no overlay is pinned visible (panel / countdown / resume).
+      if (panel || nextCountdown != null || resumeAt != null) return;
+      if (hideTimer.current) clearTimeout(hideTimer.current);
+      setShowControls(false);
+    };
+    const onPlayPause = () => rearm(true);
+    wrap.addEventListener("pointermove", onPointerMove);
+    wrap.addEventListener("pointerdown", onPointerMove);
+    wrap.addEventListener("mouseleave", onLeave);
+    const video = videoRef.current;
+    video?.addEventListener("play", onPlayPause);
+    video?.addEventListener("pause", onPlayPause);
+    return () => {
+      wrap.removeEventListener("pointermove", onPointerMove);
+      wrap.removeEventListener("pointerdown", onPointerMove);
+      wrap.removeEventListener("mouseleave", onLeave);
+      video?.removeEventListener("play", onPlayPause);
+      video?.removeEventListener("pause", onPlayPause);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panel, nextCountdown, resumeAt]);
+
+  /* ---------------------------------------------------------------- */
   /* Computed values                                                      */
   /* ---------------------------------------------------------------- */
-  const progressPct = duration > 0 ? (current / duration) * 100 : 0;
-  const bufferedPct = duration > 0 ? (buffered / duration) * 100 : 0;
   const remaining = duration > 0 ? duration - current : 0;
   const inIntro = current <= INTRO_WINDOW && duration > INTRO_WINDOW;
   const inOutro =
@@ -502,7 +569,7 @@ export function VideoPlayer({
   /* ---------------------------------------------------------------- */
   /* Render                                                              */
   /* ---------------------------------------------------------------- */
-  return (
+    return (
     <div
       ref={wrapRef}
       className={cn(
@@ -525,134 +592,73 @@ export function VideoPlayer({
           )}
         </video>
 
-        {/* Loading overlay */}
-        {loading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10 pointer-events-none">
-            <Loader2 className="h-8 w-8 animate-spin text-brand" />
-          </div>
-        )}
+        {/* Legibility scrims behind the overlays and the control bar */}
+        <Scrim side="top" hidden={!showControls} />
+        <Scrim side="bottom" hidden={!showControls} />
 
-        {/* Error overlay */}
-        {error && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-20 text-center p-6">
-            <AlertTriangle className="h-10 w-10 text-red-400 mb-3" />
-            <h3 className="text-white font-semibold">{dict.common.error}</h3>
-            <p className="text-neutral-400 text-sm mt-2">{dict.player.error}</p>
-            <button
-              type="button"
-              onClick={() => {
-                setError(false);
-                setLoading(true);
-              }}
-              className="mt-5 rounded-full bg-white/10 px-6 py-2 text-sm font-semibold text-white transition-all duration-300 hover:bg-white/20"
-            >
-              {dict.common.retry}
-            </button>
-          </div>
-        )}
+        <LoadingOverlay show={loading} />
 
-        {/* Center play / pause overlay */}
-        {!playing && !loading && !error && (
-          <div
-            className="absolute inset-0 flex items-center justify-center z-20 opacity-70 hover:opacity-100 transition-opacity"
-            onClick={togglePlay}
-          >
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/10 backdrop-blur-md">
-              <Play className="h-7 w-7 text-white ml-0.5 rtl-flip" />
-            </div>
-          </div>
-        )}
+        <ErrorOverlay
+          show={error}
+          title={dict.common.error}
+          message={dict.player.error}
+          retry={dict.common.retry}
+          onRetry={() => {
+            setError(false);
+            setLoading(true);
+          }}
+        />
 
-        {/* Resume prompt */}
-        {resumeAt && resumeAt > 0 && (
-          <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2 rounded-full bg-black/70 px-4 py-2 backdrop-blur-sm">
-            <Clock className="h-4 w-4 text-brand" aria-hidden />
-            <span className="text-sm text-white">
-              {dict.player.resumeFrom} {fmt(resumeAt)}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                const video = videoRef.current;
-                if (video) video.currentTime = resumeAt;
-                setResumeAt(null);
-              }}
-              className="px-2 py-1 text-xs font-bold text-brand hover:underline"
-            >
-              {dict.player.restart}
-            </button>
-          </div>
-        )}
+        <CenterPlayButton
+          show={!playing && !loading && !error}
+          label={dict.player.play}
+          onClick={togglePlay}
+        />
 
-        {/* Filler indicator for the currently playing episode */}
-        {fillerEpisodes.includes(episode) && (
-          <div
-            className="absolute top-4 left-4 z-20 flex items-center gap-2 rounded-full border border-amber-500/20 bg-black/60 px-3 py-1.5 backdrop-blur-sm"
-            role="status"
-            aria-label={dict.detail.fillerBadge}
-          >
-            <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-amber-400 ring-1 ring-amber-500/30">
-              {dict.detail.fillerBadge}
-            </span>
-            <span className="hidden text-[11px] font-semibold text-amber-100/90 sm:inline">
-              {dict.watch.fillerNote}
-            </span>
-          </div>
-        )}
+        <ResumeChip
+          show={!!resumeAt && resumeAt > 0}
+          label={dict.player.resumeFrom}
+          time={resumeAt ? fmt(resumeAt) : "0:00"}
+          restart={dict.player.restart}
+          onJump={() => setResumeAt(null)}
+        />
 
-        {/* Autoplay next countdown */}
-        {nextCountdown && (
-          <div className="absolute top-4 right-4 z-20 rounded-full bg-black/70 px-4 py-2 backdrop-blur-sm flex items-center gap-2">
-            <SkipForward className="h-4 w-4 text-brand" aria-hidden />
-            <span className="text-sm text-white">
-              {dict.player.autoplayNext} <span dir="ltr">{nextCountdown}s</span>
-            </span>
-            {fillerEpisodes.includes(episode + 1) && (
-              <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-amber-400 ring-1 ring-amber-500/30">
-                {dict.detail.fillerBadge}
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                setNextCountdown(null);
-                onNext?.();
-              }}
-              className="px-2 py-1 text-xs font-bold text-brand hover:underline"
-            >
-              {dict.watch.nextEpisode}
-            </button>
-          </div>
-        )}
+        <FillerBadge
+          show={fillerEpisodes.includes(episode)}
+          badge={dict.detail.fillerBadge}
+          note={dict.watch.fillerNote}
+        />
 
-        {/* Skip intro / outro */}
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex gap-2">
-          {inIntro && (
-            <button
-              type="button"
-              onClick={() => skipTo("intro")}
-              className="rounded-full bg-black/60 px-5 py-2 text-xs font-bold text-white backdrop-blur hover:bg-black/80 transition"
-            >
-              {dict.player.skipIntro}
-            </button>
-          )}
-          {inOutro && (
-            <button
-              type="button"
-              onClick={() => skipTo("outro")}
-              className="rounded-full bg-black/60 px-5 py-2 text-xs font-bold text-white backdrop-blur hover:bg-black/80 transition"
-            >
-              {dict.player.skipOutro}
-            </button>
-          )}
-        </div>
+        <AutoplayNextCounter
+          show={!!nextCountdown}
+          seconds={nextCountdown}
+          maxSeconds={5}
+          countdownLabel={dict.player.autoplayNext}
+          nextLabel={dict.watch.nextEpisode}
+          cancelLabel={dict.player.cancel}
+          fillerWarning={fillerEpisodes.includes(episode + 1)}
+          fillerBadge={dict.detail.fillerBadge}
+          onNow={() => {
+            setNextCountdown(null);
+            onNext?.();
+          }}
+          onCancel={() => setNextCountdown(null)}
+        />
+
+        <SkipButtons
+          inIntro={inIntro}
+          inOutro={inOutro}
+          skipIntro={dict.player.skipIntro}
+          skipOutro={dict.player.skipOutro}
+          onSkip={skipTo}
+        />
       </div>
 
       {/* Controls bar */}
       <div
         className={cn(
-          "absolute bottom-0 left-0 right-0 z-30 flex flex-col gap-1.5 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-4 py-3 transition-opacity duration-300",
-          showControls ? "opacity-100" : "opacity-0"
+          "absolute inset-x-0 bottom-0 z-30 flex flex-col gap-1.5 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-4 py-3 transition-opacity duration-300",
+          showControls && !error ? "opacity-100" : "opacity-0 pointer-events-none"
         )}
       >
         {/* Top row: play/pause, time, progress */}
@@ -663,11 +669,7 @@ export function VideoPlayer({
             className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 backdrop-blur-md text-white hover:bg-white/20 transition"
             aria-label={playing ? dict.player.pause : dict.player.play}
           >
-            {playing ? (
-              <Pause className="h-5 w-5" />
-            ) : (
-              <Play className="h-5 w-5 ml-0.5 rtl-flip" />
-            )}
+            {playing ? <PauseIcon size={20} /> : <PlayIcon size={20} className="rtl-flip" />}
           </button>
 
           <div className="flex-1 min-w-0">
@@ -675,22 +677,7 @@ export function VideoPlayer({
               <span dir="ltr">{fmt(current)}</span>
               <span dir="ltr">{fmt(duration)}</span>
             </div>
-            <div
-              className="relative h-1.5 w-full cursor-pointer rounded-full bg-white/10 overflow-hidden"
-              onPointerDown={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                const pct = (e.clientX - rect.left) / rect.width;
-                const video = videoRef.current;
-                if (video && video.duration) video.currentTime = pct * video.duration;
-              }}
-            >
-              <div className="h-full bg-brand" style={{ width: `${progressPct}%` }} />
-              <div className="absolute left-0 top-0 h-full bg-white/20" style={{ width: `${bufferedPct}%` }} />
-              <div
-                className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-brand ring-2 ring-black/60"
-                style={{ left: `${progressPct}%` }}
-              />
-            </div>
+            <ProgressBar current={current} duration={duration} buffered={buffered} onSeek={seekTo} />
           </div>
         </div>
 
@@ -703,11 +690,7 @@ export function VideoPlayer({
               className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition"
               aria-label={muted ? dict.player.unmute : dict.player.mute}
             >
-              {muted || volume === 0 ? (
-                <VolumeX className="h-4 w-4" />
-              ) : (
-                <Volume2 className="h-4 w-4" />
-              )}
+              {muted || volume === 0 ? <VolumeMuteIcon size={18} /> : <VolumeHighIcon size={18} />}
             </button>
             <input
               type="range"
@@ -726,6 +709,7 @@ export function VideoPlayer({
                 }
               }}
               className="h-1.5 w-20 bg-white/30 rounded-lg appearance-none cursor-pointer accent-brand"
+              aria-label={dict.player.volume}
             />
           </div>
 
@@ -740,8 +724,11 @@ export function VideoPlayer({
               aria-label={dict.player.speed}
               aria-expanded={panel === "speed"}
             >
-              <Gauge className="h-4 w-4" aria-hidden />
-              <span className="sr-only">{dict.player.speed}</span>
+              {speed === 1 ? (
+                <SpeedIcon size={18} />
+              ) : (
+                <span className="text-xs font-bold tabular-nums" dir="ltr">{speed}x</span>
+              )}
             </button>
 
             <button
@@ -754,8 +741,7 @@ export function VideoPlayer({
               aria-label={dict.player.quality}
               aria-expanded={panel === "quality"}
             >
-              <Warehouse className="h-4 w-4" aria-hidden />
-              <span className="sr-only">{dict.player.quality}</span>
+              <QualityIcon size={18} />
             </button>
 
             <button
@@ -768,18 +754,17 @@ export function VideoPlayer({
               aria-label={dict.player.subtitles}
               aria-expanded={panel === "subs"}
             >
-              <Subtitles className="h-4 w-4" aria-hidden />
-              <span className="sr-only">{dict.player.subtitles}</span>
+              <SubtitlesIcon size={18} />
             </button>
 
             <button
               type="button"
               onClick={toggleTheater}
               className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition"
-              aria-label={theater ? dict.player.exitFullscreen : dict.player.theaterMode}
+              aria-label={dict.player.theaterMode}
               aria-pressed={theater}
             >
-              {theater ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+              {theater ? <ExitTheaterIcon size={18} /> : <TheaterIcon size={18} />}
             </button>
 
             <button
@@ -789,7 +774,7 @@ export function VideoPlayer({
               aria-label={dict.player.pip}
               disabled={!document.pictureInPictureEnabled}
             >
-              <PictureInPicture2 className="h-4 w-4" aria-hidden />
+              <PipIcon size={18} />
             </button>
 
             <button
@@ -799,16 +784,7 @@ export function VideoPlayer({
               aria-label={fullscreen ? dict.player.exitFullscreen : dict.player.fullscreen}
               aria-pressed={fullscreen}
             >
-              {fullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setShowControls((prev) => !prev)}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition"
-              aria-label={showControls ? "Hide controls" : "Show controls"}
-            >
-              <RotateCcw className="h-4 w-4" aria-hidden />
+              {fullscreen ? <ExitFullscreenIcon size={18} /> : <FullscreenIcon size={18} />}
             </button>
           </div>
         </div>
@@ -827,16 +803,12 @@ export function VideoPlayer({
                   setPanel(null);
                 }}
                 className={cn(
-                  "flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm font-medium transition",
-                  speed === s
-                    ? "bg-brand text-neutral-950"
-                    : "text-neutral-600 hover:bg-neutral-200"
+                  "flex min-w-[92px] items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-medium transition",
+                  speed === s ? "bg-brand text-neutral-950" : "text-neutral-600 hover:bg-neutral-200"
                 )}
               >
                 <span dir="ltr">{s}x</span>
-                {speed === s && (
-                  <ChevronRight className="h-3 w-3 fill-neutral-950" aria-hidden />
-                )}
+                {speed === s && <CheckIcon size={14} className="text-neutral-950" />}
               </button>
             ))}
           </div>
@@ -854,12 +826,12 @@ export function VideoPlayer({
                 setPanel(null);
               }}
               className={cn(
-                "flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm font-medium transition",
+                "flex min-w-[92px] items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-medium transition",
                 level === -1 ? "bg-brand text-neutral-950" : "text-neutral-600 hover:bg-neutral-200"
               )}
             >
-              <span>Auto</span>
-              {level === -1 && <ChevronRight className="h-3 w-3 fill-neutral-950" aria-hidden />}
+              <span>{dict.player.auto}</span>
+              {level === -1 && <CheckIcon size={14} className="text-neutral-950" />}
             </button>
             {levels.map((l) => (
               <button
@@ -870,12 +842,12 @@ export function VideoPlayer({
                   setPanel(null);
                 }}
                 className={cn(
-                  "flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm font-medium transition",
+                  "flex min-w-[92px] items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-medium transition",
                   level === l.i ? "bg-brand text-neutral-950" : "text-neutral-600 hover:bg-neutral-200"
                 )}
               >
                 <span dir="ltr">{l.label}</span>
-                {level === l.i && <ChevronRight className="h-3 w-3 fill-neutral-950" aria-hidden />}
+                {level === l.i && <CheckIcon size={14} className="text-neutral-950" />}
               </button>
             ))}
           </div>
@@ -884,7 +856,7 @@ export function VideoPlayer({
 
       {/* Subtitle selector panel */}
       {panel === "subs" && (
-        <div className="absolute top-12 right-4 z-40 rounded-xl bg-white/[0.95] text-neutral-950 shadow-xl shadow-black/60 p-2">
+        <div className="absolute top-12 right-4 z-40 max-w-[240px] rounded-xl bg-white/[0.95] text-neutral-950 shadow-xl shadow-black/60 p-2">
           <div className="flex flex-col gap-1">
             <button
               type="button"
@@ -893,12 +865,12 @@ export function VideoPlayer({
                 setPanel(null);
               }}
               className={cn(
-                "flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm font-medium transition",
+                "flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-medium transition",
                 selectedSub === "off" ? "bg-brand text-neutral-950" : "text-neutral-600 hover:bg-neutral-200"
               )}
             >
               <span>{dict.player.subtitlesOff}</span>
-              {selectedSub === "off" && <ChevronRight className="h-3 w-3 fill-neutral-950" aria-hidden />}
+              {selectedSub === "off" && <CheckIcon size={14} className="text-neutral-950" />}
             </button>
             {subtitles.map((t) => (
               <button
@@ -909,12 +881,12 @@ export function VideoPlayer({
                   setPanel(null);
                 }}
                 className={cn(
-                  "flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm font-medium transition",
+                  "flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-medium transition",
                   selectedSub === t.id ? "bg-brand text-neutral-950" : "text-neutral-600 hover:bg-neutral-200"
                 )}
               >
-                <span>{t.label}</span>
-                {selectedSub === t.id && <ChevronRight className="h-3 w-3 fill-neutral-950" aria-hidden />}
+                <span className="truncate">{t.label}</span>
+                {selectedSub === t.id && <CheckIcon size={14} className="text-neutral-950" />}
               </button>
             ))}
           </div>
