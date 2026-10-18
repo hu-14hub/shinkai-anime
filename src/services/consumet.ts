@@ -107,17 +107,34 @@ async function consumetGet<T>(path: string): Promise<T> {
       signal: controller.signal,
     });
   } catch (e) {
-    throw new ConsumetError("CONSUMET_NETWORK", `Network error: ${(e as Error).message}`);
+    // AbortController timeouts surface as a DOMException("AbortError").
+    const aborted = e instanceof Error && e.name === "AbortError";
+    const detail = aborted
+      ? `timeout after ${REQUEST_TIMEOUT_MS}ms`
+      : (e as Error).message;
+    console.error(`[CONSUMET] ✗ network error on ${path}: ${detail}`);
+    throw new ConsumetError("CONSUMET_NETWORK", `Network error: ${detail}`);
   } finally {
     clearTimeout(timer);
   }
-  if (res.status === 429) throw new ConsumetError("CONSUMET_RATE_LIMITED", "Rate limited (429)");
-  if (!res.ok) throw new ConsumetError(`CONSUMET_HTTP_${res.status}`, `HTTP ${res.status}`);
+  if (res.status === 429) {
+    console.error(`[CONSUMET] ✗ rate limited (429) on ${path}`);
+    throw new ConsumetError("CONSUMET_RATE_LIMITED", "Rate limited (429)");
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    console.error(`[CONSUMET] ✗ HTTP ${res.status} on ${path}${body ? ` — body: ${body.slice(0, 300)}` : ""}`);
+    throw new ConsumetError(`CONSUMET_HTTP_${res.status}`, `HTTP ${res.status}`);
+  }
   const text = await res.text();
-  if (!text) throw new ConsumetError("CONSUMET_EMPTY", "Empty response body");
+  if (!text) {
+    console.error(`[CONSUMET] ✗ empty response body on ${path}`);
+    throw new ConsumetError("CONSUMET_EMPTY", "Empty response body");
+  }
   try {
     return JSON.parse(text) as T;
-  } catch {
+  } catch (e) {
+    console.error(`[CONSUMET] ✗ invalid JSON on ${path}: ${(e as Error).message} — head: ${text.slice(0, 300)}`);
     throw new ConsumetError("CONSUMET_PARSE", "Invalid JSON from Consumet");
   }
 }
@@ -129,11 +146,22 @@ async function consumetGet<T>(path: string): Promise<T> {
 /** `GET /anime/gogoanime/{query}` — full-text search. */
 export async function consumetSearch(query: string): Promise<ConsumetSearchItem[]> {
   const q = query.trim();
-  if (!q) return [];
+  if (!q) {
+    console.warn("[CONSUMET] search skipped: empty query");
+    return [];
+  }
   const path = `/anime/gogoanime/${encodeURIComponent(q)}`;
+  console.log(`[CONSUMET] search → query="${q}" path=${path}`);
   const data = await consumetGet<{ items?: ConsumetSearchItem[] }>(path);
   const items = Array.isArray(data.items) ? data.items : [];
-  return items.filter((i) => i && typeof i.id === "string");
+  const valid = items.filter((i) => i && typeof i.id === "string");
+  console.log(
+    `[CONSUMET] search ← ${items.length} raw / ${valid.length} valid item(s):`
+  );
+  valid.slice(0, 10).forEach((i, idx) => {
+    console.log(`  [${idx}] "${i.title}" (id=${i.id}, ep=${i.totalEpisodes ?? "?"})`);
+  });
+  return valid;
 }
 
 /** `GET /anime/gogoanime/info/{id}` — info + per-episode list. */
@@ -239,30 +267,183 @@ function cacheGet<T>(map: Map<string, { exp: number; val: T }>, key: string): T 
   return undefined;
 }
 
-/** Case/diacritic-insensitive similarity so "Demon Slayer" matches "Demon-Slayer". */
-function similarity(a: string, b: string): number {
-  const norm = (s: string) =>
-    s
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9]/g, "");
-  const na = norm(a);
-  const nb = norm(b);
-  if (!na || !nb) return 0;
-  if (na === nb) return 1;
-  if (na.includes(nb) || nb.includes(na)) return 0.9;
-  const ta = new Set(na.split(""));
-  let common = 0;
-  for (const ch of nb.split("")) if (ta.has(ch)) common += 1;
-  return common / Math.max(na.length, nb.length);
+/* ------------------------------------------------------------------ */
+/* Title matching (season / spacing / punctuation tolerant)            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Heavy normalization: case/diacritic-insensitive, drops punctuation and
+ * whitespace entirely, so "Demon-Slayer" ≡ "Demon Slayer" and accented titles
+ * compare equal to their romanized form.
+ */
+function normCompact(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
 }
 
-function pickBestItem(items: ConsumetSearchItem[], query: string): ConsumetSearchItem | undefined {
+/**
+ * Light normalization for word-level comparison: keeps alphanumerics + spaces
+ * (collapses runs) so phrase tokenization operates on readable chunks.
+ */
+function normWords(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/** Parse a season out of a title, where a normal title would not contain one. */
+function detectSeason(raw: string): number | undefined {
+  const n = raw.toLowerCase();
+  const m =
+    n.match(/\bseason\s+(\d{1,2})\b/i) ??
+    n.match(/\bs\s*(\d{1,2})\b/i) ??
+    n.match(/\b(\d{1,2})\s+(?:season|cour)\b/i);
+  if (m) {
+    const v = parseInt(m[1], 10);
+    return v >= 1 ? v : undefined;
+  }
+  // Only a trailing "(20xx)" counts as a season code; a bare year (e.g. "1999"
+  // in "Space Dandy 1999") is NOT a season.
+  if (n.includes("(20")) {
+    const y = raw.match(/\(\s*(\d{4})\s*\)\s*$/);
+    if (y) {
+      const code = parseInt(y[1].slice(1), 10);
+      if (code >= 1 && code <= 20) return code;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Strip season markers so both sides reduce to the core title
+ * ("Aoashi S2" / "Aoashi (2025)" → "aoashi").
+ */
+function stripSeason(raw: string): string {
+  return raw
+    .replace(/\bseason\s+\d{1,2}\b/gi, " ")
+    .replace(/\bs\s*\d{1,2}\b/gi, " ")
+    .replace(/\b\d{1,2}\s+(?:season|cour)\b/gi, " ")
+    .replace(/\(\s*\d{4}\s*\)/g, " ")
+    .replace(/[^a-z0-9]+/gi, " ")
+    .trim();
+}
+
+/** Case/order-insensitive containment: both titles share every word. */
+function containsAllWords(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  const wa = new Set(a.split(/\s+/).filter(Boolean));
+  const wb = b.split(/\s+/).filter(Boolean);
+  if (!wa.size || !wb.length) return false;
+  for (const w of wb) if (!wa.has(w)) return false;
+  return true;
+}
+
+/** Band-limited Levenshtein (edit distance) on strings. */
+function dist(a: string, b: string): number {
+  if (a === b) return 0;
+  const la = a.length;
+  const lb = b.length;
+  if (!la) return lb;
+  if (!lb) return la;
+  let prev = Array.from({ length: lb + 1 }, (_, i) => i);
+  for (let i = 1; i <= la; i += 1) {
+    const cur = [i];
+    for (let j = 1; j <= lb; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    prev = cur;
+  }
+  return prev[lb];
+}
+
+/** Per-word similarity (0..1) tolerating short per-word typos/reorderings. */
+function wordScore(a: string, b: string): number {
+  const wa = a.split(/\s+/).filter(Boolean);
+  const wb = b.split(/\s+/).filter(Boolean);
+  if (!wa.length || !wb.length) return 0;
+  let matched = 0;
+  const used = new Set<number>();
+  for (const w of wa) {
+    let m = 0;
+    for (let j = 0; j < wb.length; j += 1) {
+      if (used.has(j)) continue;
+      const d = dist(w, wb[j]);
+      const sc = Math.max(0, 1 - d / Math.max(w.length, wb[j].length, 1));
+      if (sc > m) {
+        m = sc;
+        if (sc > 0.5) used.add(j);
+      }
+    }
+    matched += m;
+  }
+  return matched / Math.max(wa.length, wb.length);
+}
+
+/**
+ * Score one search result against the query. Combines, in order of strength:
+ * an exact (fully-normalized) title match, a substring match, a word-set
+ * containment match, a season-aware core-title comparison, then a per-word
+ * Levenshtein fuzz score. Provider rank adds a small tie-breaker in
+ * `pickBestItem` only.
+ */
+export function matchScore(item: ConsumetSearchItem, query: string): number {
+  const itemTitle = item.title ?? "";
+  const ncA = normCompact(itemTitle);
+  const ncB = normCompact(query);
+  if (ncA.length && ncB.length && ncA === ncB) return 1;
+
+  const wA = normWords(itemTitle);
+  const wB = normWords(query);
+  if (wA && wB && (wA.includes(wB) || wB.includes(wA))) return 0.9;
+
+  // Word-set symmetry: "Rising of the Shield The Hero" ≈ "The Shield Hero".
+  if (containsAllWords(wA, wB) || containsAllWords(wB, wA)) return 0.85;
+
+  // Season-aware comparison on the reduced core titles.
+  const qSea = detectSeason(query);
+  const iSea = detectSeason(itemTitle);
+  const coreA = stripSeason(itemTitle);
+  const coreB = stripSeason(query);
+  let base: number;
+  if (coreB && (normCompact(coreA) === normCompact(coreB) || containsAllWords(coreA, coreB))) {
+    base = 0.82;
+    // Both claim a season → reward a match, penalize a mismatch.
+    if (qSea !== undefined && iSea !== undefined) base += qSea === iSea ? 0.05 : -0.15;
+  } else {
+    base = 0.5 * wordScore(coreA, coreB);
+  }
+
+  // The query explicitly wants a season the item isn't a season entry for.
+  if (qSea !== undefined && iSea === undefined) base = Math.min(base, 0.6);
+
+  return Math.max(0, Math.min(1, base));
+}
+
+/**
+ * Pick the best-matching search result, logging every candidate's score so a
+ * wrong pick (or an empty result set) is instantly visible in the server
+ * console.
+ */
+function pickBestItem(
+  items: ConsumetSearchItem[],
+  query: string
+): { item: ConsumetSearchItem; score: number } | undefined {
   if (!items.length) return undefined;
-  return items
-    .map((item, i) => ({ item, score: similarity(item.title, query) + 1 / (i + 1) }))
-    .sort((x, y) => y.score - x.score)[0]?.item;
+  const ranked = items
+    .map((item, i) => ({ item, score: matchScore(item, query) + (1 / (i + 1)) * 0.05 }))
+    .sort((a, b) => b.score - a.score);
+  console.log(`[CONSUMET] match scores for "${query}":`);
+  ranked.slice(0, 10).forEach((r, idx) => {
+    console.log(`  #${idx} score=${r.score.toFixed(3)} → "${r.item.title}" (id=${r.item.id})`);
+  });
+  return { item: ranked[0].item, score: ranked[0].score };
 }
 
 /**
@@ -278,36 +459,76 @@ export async function getConsumetEpisodeStream(
   episode: number
 ): Promise<EpisodeStream> {
   const cleanTitle = title.trim();
-  if (!cleanTitle) throw new ConsumetError("CONSUMET_NO_TITLE", "No title to search");
+  if (!cleanTitle) {
+    console.error(`[CONSUMET] rejected: empty title (episode=${episode})`);
+    throw new ConsumetError("CONSUMET_NO_TITLE", "No title to search");
+  }
+  console.log(`[CONSUMET] === resolve "${cleanTitle}" episode ${episode} ===`);
 
   /* 1) Title → GogoAnime id (cached). */
   let gogoId = cacheGet(idCache, cleanTitle);
-  if (!gogoId) {
+  if (gogoId) {
+    console.log(`[CONSUMET] cache hit id=${gogoId} for "${cleanTitle}"`);
+  } else {
     const items = await consumetSearch(cleanTitle);
+    if (!items.length) {
+      console.error(`[CONSUMET] no search results for "${cleanTitle}" → falling back`);
+      throw new ConsumetError("CONSUMET_NOT_FOUND", `No search results for "${cleanTitle}"`);
+    }
     const best = pickBestItem(items, cleanTitle);
-    if (!best) throw new ConsumetError("CONSUMET_NOT_FOUND", `No match for "${cleanTitle}"`);
-    gogoId = best.id;
+    if (!best) {
+      console.error(`[CONSUMET] no usable match among ${items.length} results for "${cleanTitle}"`);
+      throw new ConsumetError("CONSUMET_NOT_FOUND", `No match for "${cleanTitle}"`);
+    }
+    gogoId = best.item.id;
+    console.log(
+      `[CONSUMET] matched title="${best.item.title}" id=${gogoId} (score=${best.score.toFixed(3)})`
+    );
     idCache.set(cleanTitle, { exp: Date.now() + CACHE_TTL, val: gogoId });
   }
 
   /* 2) id → info + episode list (cached), then the requested episode's id. */
   let info = cacheGet(infoCache, gogoId);
-  if (!info) {
+  if (info) {
+    console.log(`[CONSUMET] cache hit info for ${gogoId} (${info.episodes?.length ?? 0} episodes)`);
+  } else {
     info = await consumetInfo(gogoId);
     infoCache.set(gogoId, { exp: Date.now() + CACHE_TTL, val: info });
   }
   const episodes = info.episodes ?? [];
-  const epItem =
-    episodes.find((e) => (e.number ?? 0) === episode) ??
-    episodes[episode - 1] ??
-    undefined;
+  console.log(`[CONSUMET] info id=${gogoId} title="${info.title}" totalEpisodes=${episodes.length}`);
+  const epByNumber = episodes.find((e) => (e.number ?? 0) === episode);
+  const epItem = epByNumber ?? episodes[episode - 1] ?? undefined;
   const episodeId = epItem?.id;
-  if (!episodeId) throw new ConsumetError("CONSUMET_NO_EPISODE", `Episode ${episode} not found`);
+  if (!episodeId) {
+    const numbers = episodes.slice(0, 60).map((e) => e.number ?? -1).join(",");
+    console.error(
+      `[CONSUMET] episode ${episode} not found (matched title "${info.title}" has ${episodes.length} episodes; numbers=${numbers})`
+    );
+    throw new ConsumetError(
+      "CONSUMET_NO_EPISODE",
+      `Episode ${episode} not found in "${info.title || gogoId}" (${episodes.length} available)`
+    );
+  } else if (!epByNumber) {
+    console.warn(
+      `[CONSUMET] no episode explicitly numbered ${episode}; using position ${episode} → id=${episodeId}`
+    );
+  }
 
   /* 3) episodeId → streaming sources. */
   const watch = await consumetWatch(episodeId);
   const sources = toStreamingSources(watch);
-  if (!sources.length) throw new ConsumetError("CONSUMET_NO_SOURCES", "No playable sources");
+  console.log(
+    `[CONSUMET] resolved episode ${episode} (id=${episodeId}) → ${sources.length} source(s)`
+  );
+  if (!sources.length) {
+    console.error(
+      `[CONSUMET] no playable sources for episode ${episode} (id=${episodeId}); raw server count=${
+        watch.sources?.length ?? 0
+      }`
+    );
+    throw new ConsumetError("CONSUMET_NO_SOURCES", "No playable sources");
+  }
 
   return { slug: "", episode, sources, subtitles: [] };
 }

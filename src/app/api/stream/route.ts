@@ -25,9 +25,23 @@ export async function GET(req: Request) {
 
   try {
     const live = await getConsumetEpisodeStream(title, episode);
+    console.log(
+      `[STREAM] live resolved: "${title}" ep=${episode} → ${live.sources.length} source(s)`
+    );
     // Keep demo subtitles (EN/AR WebVTT) — the provider doesn't supply them.
     return NextResponse.json({ ...fallback, ...live, subtitles: fallback.subtitles, source: "live" });
-  } catch {
+  } catch (err) {
+    // Surface the exact provider failure in the server console so we can
+    // diagnose network/parsing/title-resolution issues without a client round-trip.
+    const code = (err as { code?: string })?.code ?? "UNKNOWN";
+    const message = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
+    console.error(
+      `[STREAM] Consumet resolution failed → falling back to demo.\n` +
+        `  title="${title}" episode=${episode} slug="${slug}"\n` +
+        `  code=${code}\n  message=${message}` +
+        (stack ? `\n  stack=\n${stack}` : "")
+    );
     return NextResponse.json({ ...fallback, source: "fallback" });
   }
 }
