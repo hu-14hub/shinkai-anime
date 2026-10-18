@@ -311,7 +311,8 @@
     "outro": "Outro",
     "subSaved": "Default subtitle saved",
     "commentsHere": "Discuss this episode",
-    "theaterOn": "Theater mode on"
+    "theaterOn": "Theater mode on",
+    "connecting": "Connecting…"
   },
   "schedule": {
     "title": "Weekly Schedule",

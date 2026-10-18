@@ -23,11 +23,19 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
 }) {
   const router = useRouter();
   const [reported, setReported] = useState(false);
-  // Track which server pill is active. Reset on episode/anonymous change —
-  // client navigation keeps this component mounted, so we re-init here.
+  // Live streaming sources fetched client-side from the Consumet proxy
+  // (/api/stream). The SSR `stream` prop is the instant fallback; once the
+  // live sources resolve (on mount + every episode change) we swap to them.
+  const [liveStream, setLiveStream] = useState<EpisodeStream | null>(null);
+  const [streamLoading, setStreamLoading] = useState(true);
+  // Track which server pill is active. Reset on episode change — client
+  // navigation keeps this component mounted, so we re-init here.
   const [activeSourceId, setActiveSourceId] = useState<string>(
     () => stream.sources.find((s) => s.default)?.id ?? stream.sources[0]?.id ?? ""
   );
+
+  // Reset the active pill to the SSR default when the episode changes (before
+  // the live fetch resolves) so something valid is always selected.
   useEffect(() => {
     setActiveSourceId(
       stream.sources.find((s) => s.default)?.id ?? stream.sources[0]?.id ?? ""
@@ -35,13 +43,47 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, num]);
 
+  // Fetch real HLS sources for the current episode on mount + every episode
+  // change. Strictly client-side, so this never runs during `next build`.
+  useEffect(() => {
+    const controller = new AbortController();
+    setStreamLoading(true);
+    const url =
+      `/api/stream?episode=${num}` +
+      `&title=${encodeURIComponent(anime.title.en)}` +
+      `&slug=${encodeURIComponent(slug)}`;
+    fetch(url, { signal: controller.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        if (data && Array.isArray(data.sources) && data.sources.length) {
+          const ls = data as EpisodeStream;
+          setLiveStream(ls);
+          setActiveSourceId(
+            ls.sources.find((s) => s.default)?.id ?? ls.sources[0]?.id ?? ""
+          );
+        }
+      })
+      .catch(() => {
+        /* aborted or network error — keep the SSR/fallback sources */
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setStreamLoading(false);
+      });
+    return () => controller.abort();
+  }, [slug, num, anime.title.en]);
+
   const current = anime.episodes[num - 1];
   const hasNext = num < anime.episodes.length;
   const hasPrev = num > 1;
+  // Effective sources/subtitles: live Consumet sources once resolved, otherwise
+  // the SSR demo stream (instant first paint + graceful fallback). The pill
+  // list and the player both read this single array, so a live swap updates
+  // both.
+  const activeSources = liveStream?.sources?.length ? liveStream.sources : stream.sources;
+  const activeSubtitles = liveStream?.subtitles?.length ? liveStream.subtitles : stream.subtitles;
   // The currently-selected HTTP/HLS server.
-  const activeSource: StreamingSource | undefined = stream.sources.find(
-    (s) => s.id === activeSourceId
-  );
+  const activeSource: StreamingSource | undefined = activeSources.find((s) => s.id === activeSourceId);
 
   const report = () => {
     addReport({ slug, targetType: "video", targetId: `${slug}-ep-${num}`, reason: "Broken video source" });
@@ -81,8 +123,8 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
     <>
       <section aria-label={t.watch.nowPlaying}>
         <VideoPlayer
-          sources={stream.sources}
-          subtitles={stream.subtitles}
+          sources={activeSources}
+          subtitles={activeSubtitles}
           slug={slug}
           episode={num}
           totalEpisodes={anime.episodes.length}
@@ -134,7 +176,16 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
             <Server className="h-3.5 w-3.5" aria-hidden />
             {t.player.server}
           </span>
-          {stream.sources.map(renderPill)}
+          {streamLoading && (
+            <span
+              role="status"
+              className="flex items-center gap-1.5 rounded-full bg-white/5 px-3.5 py-1.5 text-xs font-bold text-neutral-400"
+            >
+              <span className="h-3 w-3 animate-spin rounded-full border-2 border-neutral-500 border-t-transparent" aria-hidden />
+              {t.player.connecting}
+            </span>
+          )}
+          {activeSources.map(renderPill)}
         </div>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-white/5 pt-3">
           <div className="flex min-w-0 items-center gap-2 text-xs text-neutral-400">
