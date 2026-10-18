@@ -4,6 +4,13 @@ import { getEpisodeStream } from "@/services/stream";
 import type { EpisodeStream } from "@/types";
 
 /**
+ * Force runtime evaluation. This handler is purely request-driven (reads the
+ * query string + fetches upstream), so it must never be evaluated during `next
+ * build`. `force-dynamic` makes that guarantee explicit and future-proof.
+ */
+export const dynamic = "force-dynamic";
+
+/**
  * GET /api/stream?episode=N&title=<anime title>[&slug=<slug>]
  *
  * Thin server-side proxy that resolves real HLS streaming sources for an

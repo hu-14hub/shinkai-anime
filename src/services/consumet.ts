@@ -90,14 +90,89 @@ export interface ConsumetWatch {
 /* Low-level fetch                                                      */
 /* ------------------------------------------------------------------ */
 
-function consumetBase(): string {
-  const fromEnv =
-    process.env.CONSUMET_BASE ?? process.env.NEXT_PUBLIC_CONSUMET_BASE ?? "";
-  return (fromEnv.trim() || DEFAULT_BASE).replace(/\/+$/, "");
+/* ------------------------------------------------------------------ */
+/* Endpoint base resolution + automatic failover                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Ordered list of Consumet base URLs to try, most-preferred first.
+ *
+ * Configure via `CONSUMET_BASES` (comma/space separated) to give the service a
+ * set of mirrors to fail over automatically; `CONSUMET_BASE` / the single
+ * public default are always appended so it keeps working with no env.
+ *   e.g. CONSUMET_BASES="http://localhost:7830,https://my-mirror.example.com"
+ */
+function baseList(): string[] {
+  const raw =
+    process.env.CONSUMET_BASES ??
+    process.env.CONSUMET_BASE ??
+    process.env.NEXT_PUBLIC_CONSUMET_BASE ??
+    "";
+  const parts = raw
+    .split(/[\s,]+/)
+    .map((s) => s.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+  const ordered = [...parts, DEFAULT_BASE];
+  return Array.from(new Set(ordered));
 }
 
-async function consumetGet<T>(path: string): Promise<T> {
-  const url = `${consumetBase()}${path}`;
+/** Primary base (first configured) — used by logs and the default `consumetGet`. */
+function consumetBase(): string {
+  return baseList()[0];
+}
+
+/**
+ * Remembers which base actually answered a request for ~30min so subsequent
+ * calls in a hot session skip re-probing dead mirrors first.
+ */
+const preferred = { base: null as string | null, exp: 0 };
+const PREFERRED_TTL = 30 * 60 * 1000;
+function markPreferred(base: string) {
+  preferred.base = base;
+  preferred.exp = Date.now() + PREFERRED_TTL;
+}
+
+/**
+ * Run `fn(base)` against the preferred base first, then every configured
+ * mirror in order, until one succeeds; records the winner. Only throws once all
+ * bases are exhausted — this is the service's automatic failover.
+ */
+async function withFallback<T>(
+  label: string,
+  fn: (base: string) => Promise<T>
+): Promise<T> {
+  const order: string[] = [];
+  if (preferred.base && preferred.exp > Date.now()) order.push(preferred.base);
+  for (const b of baseList()) if (!order.includes(b)) order.push(b);
+  if (!order.length) {
+    throw new ConsumetError("CONSUMET_NO_BASE", "No Consumet endpoint configured");
+  }
+  let lastErr: unknown = null;
+  for (const base of order) {
+    try {
+      const out = await fn(base);
+      if (base !== preferred.base) markPreferred(base);
+      return out;
+    } catch (e) {
+      lastErr = e;
+      const detail = e instanceof Error ? e.message : String(e);
+      console.warn(
+        `[CONSUMET] ${label} failed on ${base} (${detail}) → trying next mirror`
+      );
+    }
+  }
+  throw lastErr instanceof ConsumetError
+    ? lastErr
+    : new ConsumetError(
+        "CONSUMET_UNAVAILABLE",
+        `All ${order.length} Consumet endpoint(s) failed: ${
+          lastErr instanceof Error ? lastErr.message : String(lastErr)
+        }`
+      );
+}
+
+async function consumetGet<T>(path: string, base: string): Promise<T> {
+  const url = `${base}${path}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let res: Response;
@@ -152,7 +227,9 @@ export async function consumetSearch(query: string): Promise<ConsumetSearchItem[
   }
   const path = `/anime/gogoanime/${encodeURIComponent(q)}`;
   console.log(`[CONSUMET] search → query="${q}" path=${path}`);
-  const data = await consumetGet<{ items?: ConsumetSearchItem[] }>(path);
+  const data = await withFallback("search", (base) =>
+    consumetGet<{ items?: ConsumetSearchItem[] }>(path, base)
+  );
   const items = Array.isArray(data.items) ? data.items : [];
   const valid = items.filter((i) => i && typeof i.id === "string");
   console.log(
@@ -166,8 +243,9 @@ export async function consumetSearch(query: string): Promise<ConsumetSearchItem[
 
 /** `GET /anime/gogoanime/info/{id}` — info + per-episode list. */
 export async function consumetInfo(id: string): Promise<ConsumetInfo> {
-  const data = await consumetGet<ConsumetInfo>(
-    `/anime/gogoanime/info/${encodeURIComponent(id)}`
+  const path = `/anime/gogoanime/info/${encodeURIComponent(id)}`;
+  const data = await withFallback("info", (base) =>
+    consumetGet<ConsumetInfo>(path, base)
   );
   if (!data || (!data.id && !Array.isArray(data.episodes))) {
     throw new ConsumetError("CONSUMET_EMPTY", "Info response had no usable fields");
@@ -178,7 +256,9 @@ export async function consumetInfo(id: string): Promise<ConsumetInfo> {
 /** `GET /anime/gogoanime/watch?episodeId={episodeId}` — streaming sources. */
 export async function consumetWatch(episodeId: string): Promise<ConsumetWatch> {
   const path = `/anime/gogoanime/watch?episodeId=${encodeURIComponent(episodeId)}`;
-  const data = await consumetGet<ConsumetWatch>(path);
+  const data = await withFallback("watch", (base) =>
+    consumetGet<ConsumetWatch>(path, base)
+  );
   if (!data || !Array.isArray(data.sources)) {
     throw new ConsumetError("CONSUMET_EMPTY", "Watch response had no sources");
   }
