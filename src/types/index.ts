@@ -101,26 +101,18 @@ export interface WatchProgress {
 /* Streaming sources & subtitles                                      */
 /* ------------------------------------------------------------------ */
 
-export type SourceQuality = "auto" | "1080p" | "720p" | "480p" | "360p" | "P2P";
+export type SourceQuality = "auto" | "1080p" | "720p" | "480p" | "360p";
 
 export interface StreamingSource {
   id: string;
   name: string;
   /**
-   * HLS (.m3u8) or progressive URL. Adaptive HLS preferred. For P2P sources
-   * this can be an empty string — the player will fall back to `magnet`.
+   * HLS (.m3u8) or progressive URL. Adaptive HLS preferred.
    */
   url: string;
   quality: SourceQuality;
   /** Whether this source is the default for the episode. */
   default?: boolean;
-  /**
-   * Optional WebTorrent magnet link for this source. When present and the
-   * player is bound to this source, playback streams via P2P (WebRTC Data
-   * Channel + DHT + WebSeed). On any P2P failure the player transparently
-   * falls back to `url`.
-   */
-  magnet?: string;
 }
 
 export interface SubtitleTrack {
@@ -139,12 +131,6 @@ export interface EpisodeStream {
   episode: number;
   sources: StreamingSource[];
   subtitles: SubtitleTrack[];
-  /**
-   * Optional WebTorrent magnet link (or .torrent URL / info-hash) that the
-   * video player will prefer over `sources` when present. When the P2P path
-   * fails, the player transparently falls back to the HLS/MP4 sources.
-   */
-  magnet?: string;
 }
 
 /* ------------------------------------------------------------------ */
