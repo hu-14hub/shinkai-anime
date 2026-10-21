@@ -22,7 +22,8 @@ const MAX_REDIRECTS = 5;
 const MAX_MANIFEST_BYTES = 5 * 1024 * 1024;
 
 /** `Referer` sent upstream when the caller did not supply one. */
-const DEFAULT_REFERER = "https://hianime.to/";
+/* hianime.to is obsolete; hianime.dk is the confirmed current mirror. */
+const DEFAULT_REFERER = "https://hianime.dk/";
 
 /** Default `User-Agent` — some CDNs reject requests without a browser UA. */
 const DEFAULT_USER_AGENT =

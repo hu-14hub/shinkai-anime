@@ -4,7 +4,7 @@
  * WHY THIS EXISTS
  * ---------------
  * The hiAnime/Consumet provider returns media URLs that only accept requests
- * carrying provider headers (`Referer: https://hianime.to/watch/...`,
+ * carrying provider headers (`Referer: https://hianime.dk/watch/...`,
  * `User-Agent`). `Referer` is a *forbidden* header name for browser fetch/XHR,
  * so the browser can never play those URLs directly. Everything therefore has
  * to be relayed through a same-origin server route that adds the headers.
@@ -191,7 +191,7 @@ export function sanitizeHeaders(
  * Hosts the proxy is allowed to talk to.
  *
  * The list covers the hiAnime (Consumet) provider chain:
- *   - the hiAnime site itself (`hianime.to`) — the `Referer` target,
+ *   - the hiAnime site itself (`hianime.dk`, was `hianime.to`) — the `Referer` target,
  *   - the embed servers the provider extracts from
  *     (MegaCloud, StreamSB, StreamTape),
  *   - the public CDNs those embeds hand out media URLs from
@@ -204,7 +204,11 @@ export function sanitizeHeaders(
  */
 const DEFAULT_ALLOWED_HOST_PATTERNS: RegExp[] = [
   /* --- hiAnime site (Referer origin) --- */
+  /* hianime.to is obsolete; hianime.dk is the confirmed current mirror.
+     The `hianime.<tld>` wildcard below covers hianime.dk (and any future
+     hianime.* mirror); hianime.dk is listed explicitly for clarity. */
   /^hianime\.to$/i,
+  /^hianime\.dk$/i,
   /^hianime\.[a-z]{2,}$/i,
   /^www\.hianime\.to$/i,
 
