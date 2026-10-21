@@ -113,6 +113,23 @@ export interface StreamingSource {
   quality: SourceQuality;
   /** Whether this source is the default for the episode. */
   default?: boolean;
+  /**
+   * Request headers the CDN hosting the media requires (notably `Referer`).
+   * `Referer` is a forbidden header for browser fetch/XHR, so sources that need
+   * it are served through the same-origin `/api/proxy` route instead.
+   */
+  headers?: Record<string, string>;
+  /**
+   * Original upstream media URL before it was wrapped in the `/api/proxy`
+   * path. Kept for diagnostics; playback always uses the proxied `url`.
+   */
+  upstreamUrl?: string;
+  /**
+   * Whether the source is an HLS playlist. Needed because the proxied URL
+   * (`/api/proxy/<token>`) no longer ends in `.m3u8`, so the player cannot
+   * infer it from the URL.
+   */
+  isHls?: boolean;
 }
 
 export interface SubtitleTrack {

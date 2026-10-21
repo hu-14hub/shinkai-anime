@@ -16,6 +16,7 @@
  */
 
 import type { EpisodeStream, SourceQuality, StreamingSource } from "@/types";
+import { buildProxyPath } from "@/lib/media-proxy";
 
 /** Default public Consumet mirror (override with CONSUMET_BASE). */
 const DEFAULT_BASE = "https://api.consumet.ts";
@@ -78,9 +79,17 @@ export interface ConsumetSource {
   isM3U8?: boolean;
   hasM3U8?: boolean;
   /** Nested stream metadata some provider versions emit here. */
-  stream?: { source?: string; url?: string; isM3U8?: boolean; hasM3U8?: boolean };
+  stream?: {
+    source?: string;
+    url?: string;
+    isM3U8?: boolean;
+    hasM3U8?: boolean;
+    headers?: Record<string, string>;
+  };
   properties?: { url?: string; thumbnail?: string };
   download?: { source?: string; url?: string };
+  /** Per-source request headers (e.g. `Referer`). */
+  headers?: Record<string, string>;
   [key: string]: unknown;
 }
 
@@ -90,6 +99,12 @@ export interface ConsumetWatch {
   episodes?: ConsumetEpisode[];
   sources?: ConsumetSource[];
   downloadLink?: string;
+  /**
+   * Episode-level request headers returned by the provider (the hiAnime
+   * extractor returns `{ headers: { Referer } }`). Without them the CDN that
+   * hosts the .m3u8 rejects the request.
+   */
+  headers?: Record<string, string>;
   [key: string]: unknown;
 }
 
@@ -311,6 +326,24 @@ function sourcePlayableUrl(s: ConsumetSource): string | undefined {
 }
 
 /**
+ * Merge the provider's request headers into a plain `Record<string, string>`.
+ * Only string-ish values are kept so the result is JSON-serialisable.
+ */
+function normalizeHeaders(
+  ...candidates: (Record<string, string> | undefined)[]
+): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const c of candidates) {
+    if (!c || typeof c !== "object") continue;
+    for (const [k, v] of Object.entries(c)) {
+      if (typeof v !== "string" || !v) continue;
+      out[k] = v;
+    }
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
  * Map a Consumet watch response onto the player's source selector. Emits one
  * pill per provider server plus a default "Auto" pill (highest quality) so the
  * selector reads e.g. Auto, 1080p, 720p.
@@ -319,13 +352,23 @@ export function toStreamingSources(watch: ConsumetWatch): StreamingSource[] {
   const sources = watch.sources ?? [];
   const mapped: StreamingSource[] = [];
   sources.forEach((s, i) => {
-    const url = sourcePlayableUrl(s);
-    if (!url) return;
+    const upstreamUrl = sourcePlayableUrl(s);
+    if (!upstreamUrl) return;
+    const headers = normalizeHeaders(watch.headers, s.headers, s.stream?.headers);
+    const isHls = /\.m3u8(\?|$)/i.test(upstreamUrl);
     mapped.push({
       id: `src-${s.id ?? i}`,
       name: s.name?.trim() || `Server ${i + 1}`,
-      url,
+      // Always served through the same-origin media proxy: the provider CDNs
+      // require the `Referer` header, which browsers cannot set on media
+      // requests, and the proxy also handles HLS manifest rewriting.
+      url: buildProxyPath(upstreamUrl, headers),
       quality: s.quality ? normalizeQuality(s.quality) : "auto",
+      // Episode-level headers apply to every source; per-source ones win.
+      headers,
+      /** The original upstream URL (kept for diagnostics / direct use). */
+      upstreamUrl,
+      isHls,
     });
   });
   if (!mapped.length) return [];
@@ -344,6 +387,9 @@ export function toStreamingSources(watch: ConsumetWatch): StreamingSource[] {
     url: best.url,
     quality: "auto",
     default: true,
+    headers: best.headers,
+    upstreamUrl: best.upstreamUrl,
+    isHls: best.isHls,
   };
   return [auto, ...mapped];
 }

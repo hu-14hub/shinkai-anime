@@ -144,6 +144,10 @@ export function VideoPlayer({
   const [buffered, setBuffered] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  // Picture-in-Picture availability is a *browser* property. Reading
+  // `document.pictureInPictureEnabled` during SSR throws (no `document`), which
+  // crashed the watch page's server render — so probe it on the client only.
+  const [pipSupported, setPipSupported] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [levels, setLevels] = useState<{ i: number; label: string }[]>([]);
   const [level, setLevel] = useState(-1); // -1 = adaptive/auto
@@ -207,7 +211,10 @@ export function VideoPlayer({
     setLoading(true);
     setLevels([]);
     let hls: Hls | null = null;
-    const isHls = /\.m3u8(\?|$)/i.test(source.url);
+    // The proxied URL no longer ends in `.m3u8`, so prefer the explicit flag
+    // and fall back to sniffing the URL.
+    const isHls =
+      source.isHls ?? /\.m3u8(\?|$)/i.test(source.url);
 
     const onMeta = () => {
       setLoading(false);
@@ -560,15 +567,32 @@ export function VideoPlayer({
     setPanel((prev) => (prev === name ? null : name));
   };
 
+  /* ---------------------------------------------------------------- */
+  /* Picture-in-Picture capability (client-only)                      */
+  /* ---------------------------------------------------------------- */
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const supported =
+      "pictureInPictureEnabled" in document &&
+      typeof HTMLVideoElement !== "undefined" &&
+      "requestPictureInPicture" in HTMLVideoElement.prototype;
+    setPipSupported(Boolean(supported));
+  }, []);
+
   const toggleTheater = () => setTheater((prev) => !prev);
 
   const pip = async () => {
     const video = videoRef.current;
-    if (!video) return;
-    if (document.pictureInPictureElement) {
-      await document.exitPictureInPicture();
-    } else {
-      await video.requestPictureInPicture().catch(() => {});
+    if (!video || typeof document === "undefined") return;
+    if (!document.pictureInPictureEnabled) return;
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else {
+        await video.requestPictureInPicture();
+      }
+    } catch {
+      // PiP can be blocked (no user gesture, unsupported codec) — ignore.
     }
   };
 
@@ -862,7 +886,7 @@ export function VideoPlayer({
               onClick={pip}
               className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 transition"
               aria-label={dict.player.pip}
-              disabled={!document.pictureInPictureEnabled}
+              disabled={!pipSupported}
             >
               <PipIcon size={18} />
             </button>

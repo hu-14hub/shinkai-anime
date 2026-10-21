@@ -1,0 +1,71 @@
+
+=== Token signing / verification ===
+  PASS  token has payload.signature shape
+  PASS  valid token decodes
+  PASS  headers survive the round trip
+  PASS  forged payload is rejected
+  PASS  forged signature is rejected
+  PASS  missing signature is rejected
+  PASS  garbage token is rejected
+  PASS  empty token is rejected
+  PASS  dot-only token is rejected
+  PASS  signed-but-non-JSON payload is rejected
+
+=== Upstream URL validation ===
+  PASS  allow  https://s01.megacloud.tv/hls/x.m3u8
+  PASS  allow  https://megacloud.tv/e/abc
+  PASS  allow  https://watchsb.com/e/abc
+  PASS  allow  https://hianime.to/watch/abc-123
+  PASS  allow  https://v1.akamaized.net/x.m3u8
+  PASS  deny   https://cdn.example.com/x.m3u8
+  PASS  deny   http://localhost:3000/x.m3u8
+  PASS  deny   https://127.0.0.1/x.m3u8
+  PASS  deny   https://10.0.0.1/x.m3u8
+  PASS  deny   https://192.168.1.1/x.m3u8
+  PASS  deny   https://169.254.169.254/latest/meta-data
+  PASS  deny   https://metadata.google.internal/x
+  PASS  deny   https://foo.local/x
+  PASS  deny   file:///etc/passwd
+  PASS  deny   https://user:pass@megacloud.tv/x.m3u8
+
+=== Redirect validation ===
+  PASS  relative redirect resolves
+  PASS  absolute redirect to allowed host
+  PASS  redirect to metadata IP is blocked
+  PASS  redirect to unknown host is blocked
+
+=== Header sanitisation ===
+  PASS  referer kept
+  PASS  cookie dropped
+  PASS  authorization dropped
+  PASS  x-forwarded-for dropped
+  PASS  watchsb kept (StreamSB)
+  PASS  CRLF header injection blocked
+
+=== HLS manifest rewriting ===
+      #EXTM3U
+      #EXT-X-VERSION:3
+      #EXT-X-KEY:METHOD=AES-128,URI="/api/proxy/eyJ1IjoiaHR0cHM6Ly9zMDEubWVnYWNsb3VkLnR2L2hscy9rZXkucGhwP3I9NDIiLCJoIjp7InJlZmVyZXIiOiJodHRwczovL2hpYW5pbWUudG8vd2F0Y2gveCJ9fQ.eFkdSGPW0fYV7e3zqMtMa898WMJHY_Rcll8mvxBwLwU",IV=0x00
+      #EXT-X-MAP:URI="/api/proxy/eyJ1IjoiaHR0cHM6Ly9zMDEubWVnYWNsb3VkLnR2L2hscy9pbml0Lm1wNCIsImgiOnsicmVmZXJlciI6Imh0dHBzOi8vaGlhbmltZS50by93YXRjaC94In19.i35_twBs_7h_6oaKRQtzxMAB4ajjOVkC-Y95iPXs5b0"
+      #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",URI="/api/proxy/eyJ1IjoiaHR0cHM6Ly9zMDEubWVnYWNsb3VkLnR2L2hscy9hdWRpby9lbi5tM3U4IiwiaCI6eyJyZWZlcmVyIjoiaHR0cHM6Ly9oaWFuaW1lLnRvL3dhdGNoL3gifX0.BMsaW_KHyD6iBfLsxrh91L9_h_7L3PQbPmWJ_O--2iA"
+      #EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360
+      /api/proxy/eyJ1IjoiaHR0cHM6Ly9zMDEubWVnYWNsb3VkLnR2L2hscy8zNjBwLm0zdTgiLCJoIjp7InJlZmVyZXIiOiJodHRwczovL2hpYW5pbWUudG8vd2F0Y2gveCJ9fQ.7OwQUzSRz00HfBp0YS15hxxGYFCFOKNjsadcKTlmAs4
+      #EXTINF:9.009,
+      /api/proxy/eyJ1IjoiaHR0cHM6Ly9zMDEubWVnYWNsb3VkLnR2L2hscy9zZWctMC50cz90b2tlbj1hYmMiLCJoIjp7InJlZmVyZXIiOiJodHRwczovL2hpYW5pbWUudG8vd2F0Y2gveCJ9fQ.DafOF7mysVwEEiLl1xi_muiFRE5zzBlNO_dROuX5D9c
+      #EXTINF:9.009,
+      /api/proxy/eyJ1IjoiaHR0cHM6Ly9vdGhlci1jZG4uZXhhbXBsZS5uZXQvc2VnLTEudHMiLCJoIjp7InJlZmVyZXIiOiJodHRwczovL2hpYW5pbWUudG8vd2F0Y2gveCJ9fQ.MSbjuzCXS3VCa_esb0t343Koxy_pBWW-i3fUDHieyaE
+      #EXT-X-ENDLIST
+  PASS  master header kept
+  PASS  key URI proxied
+  PASS  map URI proxied
+  PASS  audio media URI proxied
+  PASS  variant playlist proxied
+  PASS  relative segment proxied
+  PASS  absolute segment proxied
+  PASS  no raw upstream host leaks in URIs
+  PASS  every proxied path has a signed token
+  PASS  data: URI left untouched
+  PASS  manifest token round-trips
+
+46 passed, 0 failed
+

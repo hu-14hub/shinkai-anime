@@ -1,0 +1,1 @@
+Invalid project directory provided, no such directory: C:\Users\pc\Downloads\Project 2\anime-stream\lint

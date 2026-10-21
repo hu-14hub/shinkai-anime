@@ -39,6 +39,7 @@ export function getEpisodeStream(
       url: FALLBACK_HLS,
       quality: "auto",
       default: true,
+      isHls: true,
     },
   ];
 

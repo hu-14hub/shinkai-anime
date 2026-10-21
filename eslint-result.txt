@@ -1,0 +1,466 @@
+
+C:\Users\pc\Downloads\Project 2\anime-stream\_diag.js
+  1:12  error  A `require()` style import is forbidden  @typescript-eslint/no-require-imports
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\app\anime\[slug]\page.tsx
+  6:43  warning  'Clock' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\app\api\stream\route.ts
+  4:15  warning  'EpisodeStream' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\app\catalog\page.tsx
+  10:10  warning  'AnimeGridSkeleton' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\app\schedule\page.tsx
+  13:26  error  Error: Cannot call impure function during render
+
+`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\app\schedule\page.tsx:13:26
+  11 |   const dict = getDictionary(locale);
+  12 |
+> 13 |   const now = Math.floor(Date.now() / 1000);
+     |                          ^^^^^^^^^^ Cannot call impure function
+  14 |   const weekStart = now - 2 * 24 * 3600; // include shows airing in the last 48h
+  15 |   const weekEnd = now + 7 * 24 * 3600;
+  16 |  react-hooks/purity
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\admin-client.tsx
+   95:50  warning  React Hook useMemo has an unnecessary dependency: 'tick'. Either exclude it or remove the dependency array  react-hooks/exhaustive-deps
+  215:49  warning  React Hook useMemo has an unnecessary dependency: 'tick'. Either exclude it or remove the dependency array  react-hooks/exhaustive-deps
+  245:47  warning  React Hook useMemo has an unnecessary dependency: 'tick'. Either exclude it or remove the dependency array  react-hooks/exhaustive-deps
+  268:6   warning  React Hook useMemo has an unnecessary dependency: 'tick'. Either exclude it or remove the dependency array  react-hooks/exhaustive-deps
+  304:43  warning  React Hook useMemo has an unnecessary dependency: 'tick'. Either exclude it or remove the dependency array  react-hooks/exhaustive-deps
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\browse-filters.tsx
+   69:5   error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\browse-filters.tsx:69:5
+  67 |   useEffect(() => {
+  68 |     const parsed = parseFilters(Object.fromEntries(searchParams.entries()));
+> 69 |     setDraft(parsed);
+     |     ^^^^^^^^ Avoid calling setState() directly within an effect
+  70 |     setTerm(parsed.q);
+  71 |     // eslint-disable-next-line react-hooks/exhaustive-deps
+  72 |   }, [urlKey]);                                                    react-hooks/set-state-in-effect
+  232:13  warning  Elements with the ARIA role "combobox" must have the following attributes defined: aria-controls,aria-expanded                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       jsx-a11y/role-has-required-aria-props
+  381:16  error    Error: Cannot create components during render
+
+Components created during render will reset their state each time they are created. Declare components outside of render.
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\browse-filters.tsx:381:16
+  379 |             {/* Select facets */}
+  380 |             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+> 381 |               <Select
+      |                ^^^^^^ This component is created during render
+  382 |                 label={dict.browse.year}
+  383 |                 value={draft.year ? String(draft.year) : ""}
+  384 |                 onChange={(v) => setFacet("year", v ? parseInt(v, 10) : undefined)}
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\browse-filters.tsx:129:18
+  127 |     (draft.sort !== "popularity" ? 1 : 0);
+  128 |
+> 129 |   const Select = ({
+      |                  ^^
+> 130 |     label,
+      | ^^^^^^^^^^
+> 131 |     value,
+      …
+      | ^^^^^^^^^^
+> 286 |     );
+      | ^^^^^^^^^^
+> 287 |   };
+      | ^^^^ The component is created during render here
+  288 |
+  289 |   return (
+  290 |     <div className="space-y-4">  react-hooks/static-components
+  394:16  error    Error: Cannot create components during render
+
+Components created during render will reset their state each time they are created. Declare components outside of render.
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\browse-filters.tsx:394:16
+  392 |               </Select>
+  393 |
+> 394 |               <Select
+      |                ^^^^^^ This component is created during render
+  395 |                 label={dict.browse.season}
+  396 |                 value={draft.season ?? ""}
+  397 |                 onChange={(v) => setFacet("season", v || undefined)}
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\browse-filters.tsx:129:18
+  127 |     (draft.sort !== "popularity" ? 1 : 0);
+  128 |
+> 129 |   const Select = ({
+      |                  ^^
+> 130 |     label,
+      | ^^^^^^^^^^
+> 131 |     value,
+      …
+      | ^^^^^^^^^^
+> 286 |     );
+      | ^^^^^^^^^^
+> 287 |   };
+      | ^^^^ The component is created during render here
+  288 |
+  289 |   return (
+  290 |     <div className="space-y-4">                                                                                                                              react-hooks/static-components
+  407:16  error    Error: Cannot create components during render
+
+Components created during render will reset their state each time they are created. Declare components outside of render.
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\browse-filters.tsx:407:16
+  405 |               </Select>
+  406 |
+> 407 |               <Select
+      |                ^^^^^^ This component is created during render
+  408 |                 label={dict.browse.format}
+  409 |                 value={draft.format ?? ""}
+  410 |                 onChange={(v) => setFacet("format", v || undefined)}
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\browse-filters.tsx:129:18
+  127 |     (draft.sort !== "popularity" ? 1 : 0);
+  128 |
+> 129 |   const Select = ({
+      |                  ^^
+> 130 |     label,
+      | ^^^^^^^^^^
+> 131 |     value,
+      …
+      | ^^^^^^^^^^
+> 286 |     );
+      | ^^^^^^^^^^
+> 287 |   };
+      | ^^^^ The component is created during render here
+  288 |
+  289 |   return (
+  290 |     <div className="space-y-4">                                                                                                                              react-hooks/static-components
+  420:16  error    Error: Cannot create components during render
+
+Components created during render will reset their state each time they are created. Declare components outside of render.
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\browse-filters.tsx:420:16
+  418 |               </Select>
+  419 |
+> 420 |               <Select
+      |                ^^^^^^ This component is created during render
+  421 |                 label={dict.browse.status}
+  422 |                 value={draft.status ?? ""}
+  423 |                 onChange={(v) => setFacet("status", v || undefined)}
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\browse-filters.tsx:129:18
+  127 |     (draft.sort !== "popularity" ? 1 : 0);
+  128 |
+> 129 |   const Select = ({
+      |                  ^^
+> 130 |     label,
+      | ^^^^^^^^^^
+> 131 |     value,
+      …
+      | ^^^^^^^^^^
+> 286 |     );
+      | ^^^^^^^^^^
+> 287 |   };
+      | ^^^^ The component is created during render here
+  288 |
+  289 |   return (
+  290 |     <div className="space-y-4">                                                                                                                              react-hooks/static-components
+  433:16  error    Error: Cannot create components during render
+
+Components created during render will reset their state each time they are created. Declare components outside of render.
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\browse-filters.tsx:433:16
+  431 |               </Select>
+  432 |
+> 433 |               <Select
+      |                ^^^^^^ This component is created during render
+  434 |                 label={dict.browse.sortBy}
+  435 |                 value={draft.sort}
+  436 |                 onChange={(v) => setFacet("sort", v as Filters["sort"])}
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\browse-filters.tsx:129:18
+  127 |     (draft.sort !== "popularity" ? 1 : 0);
+  128 |
+> 129 |   const Select = ({
+      |                  ^^
+> 130 |     label,
+      | ^^^^^^^^^^
+> 131 |     value,
+      …
+      | ^^^^^^^^^^
+> 286 |     );
+      | ^^^^^^^^^^
+> 287 |   };
+      | ^^^^ The component is created during render here
+  288 |
+  289 |   return (
+  290 |     <div className="space-y-4">                                                                                                                                  react-hooks/static-components
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\comments-section.tsx
+  67:5  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\comments-section.tsx:67:5
+  65 |   useEffect(() => {
+  66 |     const p = getProfile();
+> 67 |     setName(p.name && p.name !== "Guest" ? p.name : dict.comments.guest);
+     |     ^^^^^^^ Avoid calling setState() directly within an effect
+  68 |   }, [dict.comments.guest]);
+  69 |
+  70 |   // Live-sync across tabs is handled by useStore's own subscriptions  react-hooks/set-state-in-effect
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\continue-watching-row.tsx
+  7:10  warning  'Play' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\episode-selector.tsx
+  76:29  error  React Hook "useState" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?  react-hooks/rules-of-hooks
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\infinite-browse-grid.tsx
+  50:5  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\infinite-browse-grid.tsx:50:5
+  48 |   // Filter changes arrive as new props → reset the grid.
+  49 |   useEffect(() => {
+> 50 |     setItems(initialItems);
+     |     ^^^^^^^^ Avoid calling setState() directly within an effect
+  51 |     setPage(initialPage);
+  52 |     setHasNext(initialHasNext);
+  53 |     setError(false);  react-hooks/set-state-in-effect
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\player-icons.tsx
+  7:17  warning  '_size' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\profile-client.tsx
+  28:47  warning  React Hook useMemo has an unnecessary dependency: 'progressTick'. Either exclude it or remove the dependency array  react-hooks/exhaustive-deps
+  29:50  warning  React Hook useMemo has an unnecessary dependency: 'ratingsTick'. Either exclude it or remove the dependency array   react-hooks/exhaustive-deps
+  30:64  warning  React Hook useMemo has an unnecessary dependency: 'progressTick'. Either exclude it or remove the dependency array  react-hooks/exhaustive-deps
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\schedule-calendar.tsx
+  36:16  warning  'n' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  @typescript-eslint/no-unused-vars
+  77:3   error    Error: Cannot reassign variables declared outside of the component/hook
+
+Variable `tAired` is declared outside of the component/hook. Reassigning this value during render is a form of side effect, which can cause unpredictable behavior depending on when the component happens to re-render. If this variable is used in rendering, use useState instead. Otherwise, consider updating it in an effect. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#side-effects-must-run-outside-of-render).
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\schedule-calendar.tsx:77:3
+  75 |   dict: Dictionary;
+  76 | }) {
+> 77 |   tAired = dict.schedule.aired;
+     |   ^^^^^^ `tAired` cannot be reassigned
+  78 |   const start = startOfWeek(new Date(weekStart * 1000));
+  79 |   const byDay = new Map<number, AiringDayEntry[]>();
+  80 |   entries.forEach((e) => {  react-hooks/globals
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\search-bar.tsx
+  47:7  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\search-bar.tsx:47:7
+  45 |     const q = query.trim();
+  46 |     if (q.length < 2) {
+> 47 |       setItems([]);
+     |       ^^^^^^^^ Avoid calling setState() directly within an effect
+  48 |       setLoading(false);
+  49 |       setActive(-1);
+  50 |       return;  react-hooks/set-state-in-effect
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\video-player.tsx
+   13:3   warning  'AlertIcon' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         @typescript-eslint/no-unused-vars
+   14:3   warning  'ClockIcon' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         @typescript-eslint/no-unused-vars
+   15:3   warning  'XIcon' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             @typescript-eslint/no-unused-vars
+   37:3   warning  'LiveDot' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           @typescript-eslint/no-unused-vars
+  120:3   warning  'epTitle' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           @typescript-eslint/no-unused-vars
+  123:3   warning  'hasPrev' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           @typescript-eslint/no-unused-vars
+  124:3   warning  'totalEpisodes' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+  128:3   warning  'onPrev' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            @typescript-eslint/no-unused-vars
+  181:39  error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\video-player.tsx:181:39
+  179 |     if (!requestedSourceId) return;
+  180 |     const idx = sources.findIndex((s) => s.id === requestedSourceId);
+> 181 |     if (idx >= 0 && idx !== srcIndex) setSrcIndex(idx);
+      |                                       ^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  182 |     // eslint-disable-next-line react-hooks/exhaustive-deps
+  183 |   }, [requestedSourceId]);
+  184 |                                                                                                                                                                                                                                                                                                                                                                                                                                                  react-hooks/set-state-in-effect
+  284:5   warning  Unused eslint-disable directive (no problems were reported from 'react-hooks/exhaustive-deps')
+  382:11  warning  Expected an assignment or function call and instead saw an expression                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         @typescript-eslint/no-unused-expressions
+  387:11  error    Error: Cannot access variable before it is declared
+
+`toggleFullscreen` is accessed before it is declared, which prevents the earlier access from updating when this value changes over time.
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\video-player.tsx:387:11
+  385 |         case "F":
+  386 |           e.preventDefault();
+> 387 |           toggleFullscreen();
+      |           ^^^^^^^^^^^^^^^^ `toggleFullscreen` accessed before it is declared
+  388 |           break;
+  389 |         case "m":
+  390 |         case "M":
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\video-player.tsx:490:3
+  488 |   /* Fullscreen & theater helpers                                        */
+  489 |   /* ---------------------------------------------------------------- */
+> 490 |   const toggleFullscreen = () => {
+      |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 491 |     const el = wrapRef.current;
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 492 |     if (!el) return;
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 493 |     if (!document.fullscreenElement) {
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 494 |       el.requestFullscreen().catch(() => setFullscreen(false));
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 495 |     } else {
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 496 |       document.exitFullscreen().catch(() => {});
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 497 |     }
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 498 |   };
+      | ^^^^^ `toggleFullscreen` is declared here
+  499 |
+  500 |   useEffect(() => {
+  501 |     const onChange = () => setFullscreen(!!document.fullscreenElement);  react-hooks/immutability
+  512:5   warning  Expected an assignment or function call and instead saw an expression                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         @typescript-eslint/no-unused-expressions
+  545:9   warning  'seek' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+  579:5   error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\video-player.tsx:579:5
+  577 |       typeof HTMLVideoElement !== "undefined" &&
+  578 |       "requestPictureInPicture" in HTMLVideoElement.prototype;
+> 579 |     setPipSupported(Boolean(supported));
+      |     ^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  580 |   }, []);
+  581 |
+  582 |   const toggleTheater = () => setTheater((prev) => !prev);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            react-hooks/set-state-in-effect
+  603:9   warning  'uiVisible' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                @typescript-eslint/no-unused-vars
+  650:9   warning  'defaultSub' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-unused-vars
+  663:7   error    Error: This value cannot be modified
+
+Modifying a value used previously in an effect function or as an effect dependency is not allowed. Consider moving the modification before calling useEffect().
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\video-player.tsx:663:7
+  661 |     const track = video.textTracks?.[0];
+  662 |     if (track) {
+> 663 |       track.mode =
+      |       ^^^^^ `videoRef` cannot be modified
+  664 |         selectedSub === "off" ? "disabled" : activeSub?.id === track.id ? "showing" : "hidden";
+  665 |     }
+  666 |   }, [speed, selectedSub, activeSub]);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         react-hooks/immutability
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\watch-client.tsx
+  46:5  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\watch-client.tsx:46:5
+  44 |   // the live fetch resolves) so something valid is always selected.
+  45 |   useEffect(() => {
+> 46 |     setActiveSourceId(
+     |     ^^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  47 |       stream.sources.find((s) => s.default)?.id ?? stream.sources[0]?.id ?? ""
+  48 |     );
+  49 |     // eslint-disable-next-line react-hooks/exhaustive-deps  react-hooks/set-state-in-effect
+  56:5  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\components\watch-client.tsx:56:5
+  54 |   useEffect(() => {
+  55 |     const controller = new AbortController();
+> 56 |     setStreamLoading(true);
+     |     ^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  57 |     const url =
+  58 |       `/api/stream?episode=${num}` +
+  59 |       `&title=${encodeURIComponent(anime.title.en)}` +                                                           react-hooks/set-state-in-effect
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\data\filler-data.ts
+  155:29  error  Expected a `const` assertion instead of a literal type annotation  @typescript-eslint/prefer-as-const
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\lib\store.ts
+  21:3  warning  'ThemePref' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\lib\use-store.ts
+  15:5  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\lib\use-store.ts:15:5
+  13 |
+  14 |   useEffect(() => {
+> 15 |     setValue(read<T>(key, fallback));
+     |     ^^^^^^^^ Avoid calling setState() directly within an effect
+  16 |     const unsub = subscribe(key, () => setTick((t) => t + 1));
+  17 |     const unsubExt = onExternalChange(key, () => setTick((t) => t + 1));
+  18 |     return () => {  react-hooks/set-state-in-effect
+  26:5  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\lib\use-store.ts:26:5
+  24 |
+  25 |   useEffect(() => {
+> 26 |     setValue(read<T>(key, fallback));
+     |     ^^^^^^^^ Avoid calling setState() directly within an effect
+  27 |     // eslint-disable-next-line react-hooks/exhaustive-deps
+  28 |   }, [tick]);
+  29 |                                                                                   react-hooks/set-state-in-effect
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\services\consumet.ts
+  142:10  warning  'consumetBase' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\pc\Downloads\Project 2\anime-stream\src\services\stream.ts
+  33:3  warning  'animeTitle' is defined but never used  @typescript-eslint/no-unused-vars
+
+✖ 54 problems (22 errors, 32 warnings)
+  0 errors and 1 warning potentially fixable with the `--fix` option.
+
