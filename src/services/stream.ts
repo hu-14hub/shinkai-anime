@@ -11,7 +11,7 @@
 import type { EpisodeStream, StreamingSource, SubtitleTrack } from "@/types";
 
 /**
- * Built-in public test HLS stream used when live (Consumet/GogoAnime)
+ * Built-in public test HLS stream used when live (Consumet/HiAnime)
  * sources cannot be resolved.
  *
  * `test-streams.mux.dev/x36xhzz` is a well-known, long-running adaptive HLS

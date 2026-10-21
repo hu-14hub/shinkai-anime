@@ -1,19 +1,18 @@
 /**
- * Consumet API service (GogoAnime provider).
+ * Consumet API service (HiAnime provider).
  *
- * Typed helpers that talk to a self-hostable Consumet instance and resolve
- * real, playable HLS (.m3u8) streaming links for an episode — used to feed the
- * video player's source selector dynamically when a user opens an episode.
+ * `gogoanime` was **removed** from the Consumet provider list, so this service
+ * now targets the live **hiAnime** provider. Endpoints (relative to base):
+ *   - Search : GET /anime/hiAnime/search?keywords={query}
+ *   - Info   : GET /anime/hiAnime/info?animeId={id}
+ *   - Watch  : GET /anime/hiAnime/watch?episodeId={id}&ep={n}
  *
- * Endpoints (relative to the configured base URL):
- *   - Search   : GET /anime/gogoanime/{query}
- *   - Info     : GET /anime/gogoanime/info/{id}
- *   - Watch    : GET /anime/gogoanime/watch?episodeId={episodeId}
+ * The official public API (https://api.consumet.org) is HTTP 451 and asks you
+ * to self-host. Set CONSUMET_BASE (and optionally CONSUMET_BASES for
+ * failover) in .env.local to point at your instance.
  *
- * Resilience: the base URL is configurable via `CONSUMET_BASE` (server) or
- * `NEXT_PUBLIC_CONSUMET_BASE` (client); every request has a 12s timeout and is
- * wrapped in a typed `ConsumetError`. The orchestrator throws when no usable
- * source is found so callers (/api/stream) can fall back to demo sources.
+ * All responses are tolerated via index-signature fields in the interfaces
+ * below; fields specific to hiAnime are named explicitly for clarity.
  */
 
 import type { EpisodeStream, SourceQuality, StreamingSource } from "@/types";
@@ -39,16 +38,24 @@ export class ConsumetError extends Error {
 /* ------------------------------------------------------------------ */
 
 export interface ConsumetSearchItem {
+  /** Opaque hiAnime id (the id/URL from search; passed straight to info/watch). */
   id: string;
   title: string;
+  /** hiAnime poster image (absolute URL). */
+  img?: string;
+  /** Some builds use `image` instead of `img`. */
   image?: string;
   totalEpisodes?: number;
   [key: string]: unknown;
 }
 
 export interface ConsumetEpisode {
+  /** Opaque hiAnime episode id/URL (passed straight to watch). */
   id: string;
+  /** hiAnime episode number. */
   number?: number;
+  /** hiAnime episode title. */
+  name?: string;
   url?: string;
   thumbnail?: string;
   [key: string]: unknown;
@@ -218,19 +225,21 @@ async function consumetGet<T>(path: string, base: string): Promise<T> {
 /* Typed endpoint helpers                                               */
 /* ------------------------------------------------------------------ */
 
-/** `GET /anime/gogoanime/{query}` — full-text search. */
+/** `GET /anime/hiAnime/search?keywords={query}` — full-text search. */
 export async function consumetSearch(query: string): Promise<ConsumetSearchItem[]> {
   const q = query.trim();
   if (!q) {
     console.warn("[CONSUMET] search skipped: empty query");
     return [];
   }
-  const path = `/anime/gogoanime/${encodeURIComponent(q)}`;
+  const path = `/anime/hiAnime/search?keywords=${encodeURIComponent(q)}`;
   console.log(`[CONSUMET] search → query="${q}" path=${path}`);
   const data = await withFallback("search", (base) =>
-    consumetGet<{ items?: ConsumetSearchItem[] }>(path, base)
+    consumetGet<ConsumetSearchItem[] | { items?: ConsumetSearchItem[] }>(path, base)
   );
-  const items = Array.isArray(data.items) ? data.items : [];
+  // hiAnime returns a bare array ({ id, title, img }[]); tolerate a wrapped
+  // { items: [...] } shape too, in case the base is a different/older build.
+  const items = Array.isArray(data) ? data : Array.isArray(data.items) ? data.items : [];
   const valid = items.filter((i) => i && typeof i.id === "string");
   console.log(
     `[CONSUMET] search ← ${items.length} raw / ${valid.length} valid item(s):`
@@ -241,9 +250,12 @@ export async function consumetSearch(query: string): Promise<ConsumetSearchItem[
   return valid;
 }
 
-/** `GET /anime/gogoanime/info/{id}` — info + per-episode list. */
+/** `GET /anime/hiAnime/info?animeId={id}` — info + per-episode list. */
 export async function consumetInfo(id: string): Promise<ConsumetInfo> {
-  const path = `/anime/gogoanime/info/${encodeURIComponent(id)}`;
+  // `id` comes straight from this SAME instance's search response, so its
+  // form (slug vs absolute URL) is self-consistent by construction.
+  const path = `/anime/hiAnime/info?animeId=${encodeURIComponent(id)}`;
+  console.log(`[CONSUMET] info → animeId="${id}"`);
   const data = await withFallback("info", (base) =>
     consumetGet<ConsumetInfo>(path, base)
   );
@@ -253,9 +265,12 @@ export async function consumetInfo(id: string): Promise<ConsumetInfo> {
   return data;
 }
 
-/** `GET /anime/gogoanime/watch?episodeId={episodeId}` — streaming sources. */
-export async function consumetWatch(episodeId: string): Promise<ConsumetWatch> {
-  const path = `/anime/gogoanime/watch?episodeId=${encodeURIComponent(episodeId)}`;
+/** `GET /anime/hiAnime/watch?episodeId={episodeId}&ep={ep}` — streaming sources. */
+export async function consumetWatch(episodeId: string, ep?: number): Promise<ConsumetWatch> {
+  const params = new URLSearchParams({ episodeId });
+  if (ep != null) params.set("ep", String(ep));
+  const path = `/anime/hiAnime/watch?${params.toString()}`;
+  console.log(`[CONSUMET] watch → episodeId="${episodeId}" ep=${ep ?? "?"}`);
   const data = await withFallback("watch", (base) =>
     consumetGet<ConsumetWatch>(path, base)
   );
@@ -307,7 +322,7 @@ export function toStreamingSources(watch: ConsumetWatch): StreamingSource[] {
     const url = sourcePlayableUrl(s);
     if (!url) return;
     mapped.push({
-      id: `gogo-${s.id ?? i}`,
+      id: `src-${s.id ?? i}`,
       name: s.name?.trim() || `Server ${i + 1}`,
       url,
       quality: s.quality ? normalizeQuality(s.quality) : "auto",
@@ -324,7 +339,7 @@ export function toStreamingSources(watch: ConsumetWatch): StreamingSource[] {
   };
   const best = mapped.slice().sort((a, b) => heightOf(b.url) - heightOf(a.url))[0];
   const auto: StreamingSource = {
-    id: "gogo-auto",
+    id: "auto",
     name: "Auto",
     url: best.url,
     quality: "auto",
@@ -545,7 +560,7 @@ export async function getConsumetEpisodeStream(
   }
   console.log(`[CONSUMET] === resolve "${cleanTitle}" episode ${episode} ===`);
 
-  /* 1) Title → GogoAnime id (cached). */
+  /* 1) Title → provider id (cached). */
   let gogoId = cacheGet(idCache, cleanTitle);
   if (gogoId) {
     console.log(`[CONSUMET] cache hit id=${gogoId} for "${cleanTitle}"`);
@@ -596,7 +611,7 @@ export async function getConsumetEpisodeStream(
   }
 
   /* 3) episodeId → streaming sources. */
-  const watch = await consumetWatch(episodeId);
+  const watch = await consumetWatch(episodeId, episode);
   const sources = toStreamingSources(watch);
   console.log(
     `[CONSUMET] resolved episode ${episode} (id=${episodeId}) → ${sources.length} source(s)`

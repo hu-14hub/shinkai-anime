@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
  * GET /api/stream?episode=N&title=<anime title>[&slug=<slug>]
  *
  * Thin server-side proxy that resolves real HLS streaming sources for an
- * episode via the Consumet (GogoAnime) provider. Falling back to the demo
+ * episode via the Consumet (HiAnime) provider. Falling back to the demo
  * source map on any failure so playback — and the /api/stream build — never
  * breaks when the external provider is unreachable or a title doesn't resolve.
  *
