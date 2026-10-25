@@ -160,6 +160,9 @@ export function VideoPlayer({
   const [nextCountdown, setNextCountdown] = useState<number | null>(null);
   // Bump to force the load effect to run again (Retry button / recover).
   const [loadAttempt, setLoadAttempt] = useState(0);
+  // Iframe (AniPub embed) mode: shows a spinner until the embed loads and a
+  // "Open in a new tab" fallback if it ever fails to load inside the frame.
+  const [iframeLoading, setIframeLoading] = useState(true);
   const resumeRef = useRef(resumeAt);
   useEffect(() => {
     resumeRef.current = resumeAt;
@@ -181,6 +184,14 @@ export function VideoPlayer({
     if (idx >= 0 && idx !== srcIndex) setSrcIndex(idx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedSourceId]);
+
+  /* ---------------------------------------------------------------- */
+  /* Iframe (AniPub embed) mode: reset the loading flag on source change */
+  /* ---------------------------------------------------------------- */
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (source?.kind === "iframe") setIframeLoading(true);
+  }, [source, loadAttempt]);
 
   /* Track native buffered extent for the HTTP/HLS path. */
   useEffect(() => {
@@ -210,6 +221,16 @@ export function VideoPlayer({
     setError(false);
     setLoading(true);
     setLevels([]);
+
+    // Iframe-embedded third-party player (AniPub / gogoanime `streaming.php`).
+    // There is no native <video> element to drive — the <iframe> below handles
+    // playback, controls and buffering entirely. Just clear the spinner.
+    if (source.kind === "iframe") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setLoading(false);
+      return;
+    }
+
     let hls: Hls | null = null;
     // The proxied URL no longer ends in `.m3u8`, so prefer the explicit flag
     // and fall back to sniffing the URL.
@@ -652,6 +673,11 @@ export function VideoPlayer({
   // Distinct "nothing to play" state: zero sources resolved (live + fallback
   // both empty). Shown with a friendly message + retry instead of an error.
   const noSources = sources.length === 0;
+  // AniPub (and most third-party providers) return full iframe-embed pages
+  // rather than direct media URLs. When the active source is an iframe, render
+  // the <iframe> branch and hide every native <video> control — the embed page
+  // supplies its own playback controls.
+  const isWrap = source?.kind === "iframe";
 
   /* Apply speed / subtitles to video element */
   useEffect(() => {
@@ -687,23 +713,25 @@ export function VideoPlayer({
     >
       {/* Video element */}
       <div className="relative aspect-video w-full bg-black">
-        <video
-          ref={videoRef}
-          className="w-full h-full block object-contain"
-          poster={poster}
-          preload="metadata"
-          muted={muted || volume === 0}
-        >
-          {source && activeSub?.url && (
-            <track kind="captions" src={activeSub.url} label={activeSub.label} />
-          )}
-        </video>
+        {!isWrap && (
+          <video
+            ref={videoRef}
+            className="w-full h-full block object-contain"
+            poster={poster}
+            preload="metadata"
+            muted={muted || volume === 0}
+          >
+            {source && activeSub?.url && (
+              <track kind="captions" src={activeSub.url} label={activeSub.label} />
+            )}
+          </video>
+        )}
 
         {/* Legibility scrims behind the overlays and the control bar */}
-        <Scrim side="top" hidden={!showControls} />
-        <Scrim side="bottom" hidden={!showControls} />
+        <Scrim side="top" hidden={isWrap || !showControls} />
+        <Scrim side="bottom" hidden={isWrap || !showControls} />
 
-        <LoadingOverlay show={loading && !noSources} />
+        <LoadingOverlay show={!isWrap && loading && !noSources} />
 
         <NoSourcesOverlay
           show={noSources}
@@ -714,7 +742,7 @@ export function VideoPlayer({
         />
 
         <ErrorOverlay
-          show={error && !noSources}
+          show={!isWrap && error && !noSources}
           title={dict.common.error}
           message={dict.player.error}
           retry={dict.common.retry}
@@ -724,13 +752,13 @@ export function VideoPlayer({
         />
 
         <CenterPlayButton
-          show={!playing && !loading && !error && !noSources}
+          show={!isWrap && !playing && !loading && !error && !noSources}
           label={dict.player.play}
           onClick={togglePlay}
         />
 
         <ResumeChip
-          show={!!resumeAt && resumeAt > 0}
+          show={!isWrap && !!resumeAt && resumeAt > 0}
           label={dict.player.resumeFrom}
           time={resumeAt ? fmt(resumeAt) : "0:00"}
           restart={dict.player.restart}
@@ -760,8 +788,8 @@ export function VideoPlayer({
         />
 
         <SkipButtons
-          inIntro={inIntro}
-          inOutro={inOutro}
+          inIntro={!isWrap && inIntro}
+          inOutro={!isWrap && inOutro}
           skipIntro={dict.player.skipIntro}
           skipOutro={dict.player.skipOutro}
           onSkip={skipTo}
@@ -772,7 +800,7 @@ export function VideoPlayer({
       <div
         className={cn(
           "absolute inset-x-0 bottom-0 z-30 flex flex-col gap-1.5 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-4 py-3 transition-opacity duration-300",
-          showControls && !error ? "opacity-100" : "opacity-0 pointer-events-none"
+          isWrap ? "hidden" : showControls && !error ? "opacity-100" : "opacity-0 pointer-events-none"
         )}
       >
         {/* Top row: play/pause, time, progress */}
@@ -904,8 +932,41 @@ export function VideoPlayer({
         </div>
       </div>
 
-      {/* Speed selector panel */}
-      {panel === "speed" && (
+      {/* Iframe-embedded Anipub player — played in its own frame; the embed page
+          supplies its own controls. Shown when the active source is an
+          iframe URL (no native <video> available for it). */}
+      {isWrap && source?.kind === "iframe" && (
+        <div className="absolute inset-0">
+          <iframe
+            key={`${source.id}:${source.url}:${loadAttempt}`}
+            src={source.url}
+            title={epTitle || "stream"}
+            className="h-full w-full border-0 bg-black"
+            allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+            allowFullScreen
+            referrerPolicy="no-referrer-when-downgrade"
+            onLoad={() => setIframeLoading(false)}
+          />
+          {iframeLoading && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <span className="h-9 w-9 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden />
+            </div>
+          )}
+          <a
+            href={source.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(
+              "absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-neutral-950/85 px-3 py-1.5 text-xs font-bold text-white ring-1 ring-white/15 transition-all duration-300 hover:opacity-100 group-hover:opacity-100",
+              iframeLoading ? "opacity-100" : "opacity-0"
+            )}
+            aria-label={dict.player.openInNewTab}
+          >
+            ↗ {dict.player.openInNewTab}
+          </a>
+        </div>
+      )}
+      {!isWrap && panel === "speed" && (
         <div className="absolute top-12 right-4 z-40 rounded-xl bg-white/[0.95] text-neutral-950 shadow-xl shadow-black/60 p-2">
           <div className="flex flex-col gap-1">
             {SPEEDS.map((s) => (
@@ -930,7 +991,7 @@ export function VideoPlayer({
       )}
 
       {/* Quality selector panel */}
-      {panel === "quality" && levels.length > 0 && (
+      {!isWrap && panel === "quality" && levels.length > 0 && (
         <div className="absolute top-12 right-4 z-40 rounded-xl bg-white/[0.95] text-neutral-950 shadow-xl shadow-black/60 p-2">
           <div className="flex flex-col gap-1">
             <button
@@ -969,7 +1030,7 @@ export function VideoPlayer({
       )}
 
       {/* Subtitle selector panel */}
-      {panel === "subs" && (
+      {!isWrap && panel === "subs" && (
         <div className="absolute top-12 right-4 z-40 max-w-[240px] rounded-xl bg-white/[0.95] text-neutral-950 shadow-xl shadow-black/60 p-2">
           <div className="flex flex-col gap-1">
             <button

@@ -5,7 +5,6 @@ import { getDictionary } from "@/i18n/get-dictionary";
 import { getLocale } from "@/i18n/server";
 import { animeList, getAnimeBySlug } from "@/data/anime";
 import { anilistIdFromSlug, getAnimeDetail } from "@/services/anilistService";
-import { getEpisodeStream } from "@/services/stream";
 import { WatchClient } from "@/components/watch-client";
 
 export function generateStaticParams() {
@@ -28,19 +27,12 @@ export default async function WatchPage({ params, searchParams }: {
   if (!anime) notFound();
   const num = Math.min(Math.max(parseInt(ep ?? "1", 10) || 1, 1), anime.episodes.length);
   const BackIcon = locale === "ar" ? ArrowRight : ArrowLeft;
-  const stream = await getEpisodeStream(slug, num, anime.title[locale]);
+  // NOTE: AniPub resolution is intentionally done on the CLIENT (see
+  // WatchClient). Vercel serverless requests to AniPub are blocked / fail, so
+  // we render the watch shell immediately (stream=null) and let the browser
+  // resolve the source. We never pass a stale/failed SSR stream here.
   const current = anime.episodes[num - 1];
 
-  if (!stream || !stream.sources.length) {
-    return (
-      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-10 px-4 py-8 sm:px-6 sm:py-10">
-        <div className="text-center py-20">
-          <h2 className="text-xl font-semibold text-white">Streaming source unavailable</h2>
-          <p className="mt-2 text-neutral-400">AniPub could not resolve a stream for this episode. Please try another episode.</p>
-        </div>
-      </main>
-    );
-  }
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-10 px-4 py-8 sm:px-6 sm:py-10">
       <div>
@@ -60,7 +52,7 @@ export default async function WatchPage({ params, searchParams }: {
           {current.title[locale]} · <span dir="ltr">{current.duration}</span>
         </p>
       </div>
-      <WatchClient slug={slug} num={num} anime={anime} stream={stream} locale={locale} dict={t} />
+      <WatchClient slug={slug} num={num} anime={anime} stream={null} locale={locale} dict={t} />
     </main>
   );
 }

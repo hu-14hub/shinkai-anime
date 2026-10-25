@@ -17,21 +17,23 @@ import type { Anime, EpisodeStream, StreamingSource } from "@/types";
 import { cn } from "@/lib/utils";
 import { VideoPlayer } from "@/components/video-player";
 import { CommentsSection } from "@/components/comments-section";
+import { getEpisodeStream } from "@/services/stream";
 
 export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
-  slug: string; num: number; anime: Anime; stream: EpisodeStream; locale: Locale; dict: Dictionary;
+  slug: string; num: number; anime: Anime; stream: EpisodeStream | null; locale: Locale; dict: Dictionary;
 }) {
   const router = useRouter();
   const [reported, setReported] = useState(false);
-  // Live streaming sources fetched client-side from the /api/stream route.
-  // The SSR `stream` prop is the instant fallback; once the live sources
-  // resolve (on mount + every episode change) we swap to them.
+  // Live streaming sources resolved client-side by calling AniPub's API
+  // directly in the browser. The SSR `stream` prop is always null on Vercel —
+  // that blocked / failure-prone server request is never run server-side anymore.
   const [liveStream, setLiveStream] = useState<EpisodeStream | null>(null);
   const [streamLoading, setStreamLoading] = useState(true);
-  // Track which server pill is active. Reset on episode change — client
-  // navigation keeps this component mounted, so we re-init here.
+  // Track which server pill is active. Starts empty; set once live sources
+  // resolve. Client navigation keeps this component mounted, so reset on
+  // episode change.
   const [activeSourceId, setActiveSourceId] = useState<string>(
-    () => stream.sources.find((s) => s.default)?.id ?? stream.sources[0]?.id ?? ""
+    () => stream?.sources.find((s) => s.default)?.id ?? stream?.sources[0]?.id ?? ""
   );
   // Bump to force the live source fetch to re-run (Retry button in the player).
   const [refreshKey, setRefreshKey] = useState(0);
@@ -40,43 +42,39 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
     setRefreshKey((k) => k + 1);
   };
 
-  // Reset the active pill to the SSR default when the episode changes (before
-  // the live fetch resolves) so something valid is always selected.
+  // Reset the active pill when the episode changes (client navigation keeps
+  // this component mounted) so it re-selects once the live sources resolve.
   useEffect(() => {
-    setActiveSourceId(
-      stream.sources.find((s) => s.default)?.id ?? stream.sources[0]?.id ?? ""
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setActiveSourceId("");
   }, [slug, num]);
 
-  // Fetch real HLS sources for the current episode on mount + every episode
-  // change. Strictly client-side, so this never runs during `next build`.
+  // Resolve the episode's stream DIRECTLY in the browser by calling AniPub's
+  // API (getEpisodeStream hits https://anipub.org, which sends
+  // Access-Control-Allow-Origin: *). Runs on mount + every episode change and
+  // is never executed during `next build`, so Vercel's blocked serverless
+  // requests are bypassed entirely.
   useEffect(() => {
-    const controller = new AbortController();
+    let cancelled = false;
     setStreamLoading(true);
-    const url =
-      `/api/stream?episode=${num}` +
-      `&title=${encodeURIComponent(anime.title.en)}` +
-      `&slug=${encodeURIComponent(slug)}`;
-    fetch(url, { signal: controller.signal })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (controller.signal.aborted) return;
-        if (data && Array.isArray(data.sources) && data.sources.length) {
-          const ls = data as EpisodeStream;
+    getEpisodeStream(slug, num, anime.title.en)
+      .then((ls) => {
+        if (cancelled) return;
+        if (ls && ls.sources.length) {
           setLiveStream(ls);
           setActiveSourceId(
-            ls.sources.find((s) => s.default)?.id ?? ls.sources[0]?.id ?? ""
+            ls.sources.find((s) => s.default)?.id ?? ls.sources[0].id
           );
         }
       })
       .catch(() => {
-        /* aborted or network error — keep the SSR sources */
+        /* network / CORS error — keep the connecting spinner + empty state */
       })
       .finally(() => {
-        if (!controller.signal.aborted) setStreamLoading(false);
+        if (!cancelled) setStreamLoading(false);
       });
-    return () => controller.abort();
+    return () => {
+      cancelled = true;
+    };
   }, [slug, num, anime.title.en, refreshKey]);
 
   const current = anime.episodes[num - 1];
@@ -85,8 +83,8 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
   // Effective sources/subtitles: live sources once resolved, otherwise
   // the SSR sources from the page. The pill list and the player both read
   // this single array, so a live swap updates both.
-  const activeSources = liveStream?.sources?.length ? liveStream.sources : stream.sources;
-  const activeSubtitles = liveStream?.subtitles?.length ? liveStream.subtitles : stream.subtitles;
+  const activeSources = liveStream?.sources?.length ? liveStream.sources : stream?.sources ?? [];
+  const activeSubtitles = liveStream?.subtitles?.length ? liveStream.subtitles : stream?.subtitles ?? [];
   // The currently-selected HTTP/HLS server.
   const activeSource: StreamingSource | undefined = activeSources.find((s) => s.id === activeSourceId);
 

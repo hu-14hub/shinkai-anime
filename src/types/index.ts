@@ -111,6 +111,15 @@ export interface StreamingSource {
    */
   url: string;
   quality: SourceQuality;
+  /**
+   * Playback mechanism for the source:
+   *  - `"hls"`: adaptive / progressive URL played via hls.js or native `<video>`.
+   *  - `"iframe"`: a third-party embed page (e.g. an AniPub / gogoanime
+   *    `streaming.php` URL) that must be rendered inside an `<iframe>` because
+   *    it is a full webpage, not a direct media URL.
+   * When omitted the player defaults to the HLS/`<video>` path.
+   */
+  kind?: "hls" | "iframe";
   /** Whether this source is the default for the episode. */
   default?: boolean;
   /**

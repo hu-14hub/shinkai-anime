@@ -236,7 +236,51 @@ async function resolveAniPubEpisodeLink(
   return urlResolved;
 }
 
+/**
+ * Classify a resolved AniPub URL into a playback mechanism.
+ *
+ * AniPub returns third-party *web-page* embed links (e.g. gogoanime
+ * `streaming.php?id=...&ep=...`) rather than direct media files. Those cannot
+ * be played by hls.js / `<video src>` and must be rendered inside an
+ * `<iframe>`. Direct media URLs (`.m3u8` / `.mp4` / …) are the `hls` kind.
+ */
+function classifySource(url: string): { kind: "hls" | "iframe"; isHls: boolean } {
+  const looksLikeIframe =
+    /(streaming|video|watch|player)\.php/i.test(url) ||
+    /\.php(\?|$)/i.test(url) ||
+    /\/video\//i.test(url) ||
+    /\.(html?|aspx|jsp)(\?|$)/i.test(url);
+
+  if (looksLikeIframe) return { kind: "iframe", isHls: false };
+
+  const isHls = /\.m3u8(\?|$)/i.test(url);
+  return { kind: "hls", isHls };
+}
+
+/** Build the single AniPub streaming source for a resolved episode URL. */
+function buildAniPubSource(url: string): StreamingSource {
+  const { kind, isHls } = classifySource(url);
+  return {
+    id: "anipub",
+    name: "AniPub",
+    url,
+    quality: "auto",
+    default: true,
+    kind,
+    isHls,
+  };
+}
+
 /** Map an episode to its streaming sources & subtitle tracks.
+ *
+ * Resolution flow (browser-safe — runs client-side so Vercel's blocked
+ * server-side requests are never involved):
+ *   1. Search AniPub by the anime title (or cleaned slug) — `/api/search/:q`.
+ *   2. AniPub returns a JSON *array* of candidates; pick the best match by
+ *      numeric `Id` (the details endpoint requires the numeric Id — the
+ *      `finder` slug returns an internal server error).
+ *   3. Fetch `/v1/api/details/:id` and pick the (1-based) episode's `link`.
+ *   4. Classify that link (`iframe` vs `hls`) and return it as a source.
  *
  * Returns null when AniPub cannot resolve a valid episode link.
  */
@@ -246,76 +290,63 @@ export async function getEpisodeStream(
   animeTitle?: string
 ): Promise<EpisodeStream | null> {
   const clean = cleanSlug(slug);
+  const query = (animeTitle && animeTitle.trim()) || clean;
+  const searchUrl = `${ANIPUB_BASE}/api/search/${encodeURIComponent(query)}`;
 
-  /* ---------------------------------------------------------------- */
-  /* 1) Try AniPub API with the cleaned slug directly                  */
-  /* ---------------------------------------------------------------- */
   console.log(
-    `[STREAM] [AniPub] fetching details for slug="${slug}" (cleaned="${clean}") ep=${episode}`
+    `[STREAM] [AniPub] searching q="${query}" slug="${slug}" (cleaned="${clean}") ep=${episode}`
   );
 
-  let url = await resolveAniPubEpisodeLink(clean, episode);
+  const searchRes = await fetchWithDebug(searchUrl);
 
-  /* ---------------------------------------------------------------- */
-  /* 2) If direct slug failed and we have a title, search AniPub       */
-  /* ---------------------------------------------------------------- */
-  if (!url && animeTitle) {
-    const searchUrl = `${ANIPUB_BASE}/api/search/${encodeURIComponent(animeTitle)}`;
+  if (searchRes.ok && searchRes.data) {
+    // AniPub returns a JSON *array* of candidates.
+    const candidates: AniPubSearchResult[] = Array.isArray(searchRes.data)
+      ? (searchRes.data as AniPubSearchResult[])
+      : [];
 
-    console.log(
-      `[STREAM] [AniPub] direct slug failed — searching by title="${animeTitle}" url="${searchUrl}"`
-    );
+    const hasNumericId = (c: AniPubSearchResult) =>
+      typeof c.Id === "number" ||
+      (typeof c.Id === "string" && /^\d+$/.test(c.Id));
 
-    const searchRes = await fetchWithDebug(searchUrl);
+    // Prefer an exact finder/slug match, then a name match, then the first
+    // candidate carrying a numeric Id.
+    const match =
+      candidates.find((c) => c.finder && c.finder === clean) ??
+      candidates.find(
+        (c) =>
+          typeof c.Name === "string" &&
+          c.Name.toLowerCase() === clean.toLowerCase()
+      ) ??
+      candidates.find(hasNumericId);
 
-    if (searchRes.ok && searchRes.data) {
-      const searchData = searchRes.data as AniPubSearchResult;
+    const numericId = match && hasNumericId(match) ? String(match.Id) : null;
 
-      // Prefer the `finder` slug (works with /v1/api/details/:id),
-      // then fall back to the numeric Id/_id.
-      const finder =
-        searchData.finder ?? searchData.Id ?? searchData._id;
-
-      if (finder != null) {
-        console.log(
-          `[STREAM] [AniPub] search found identifier="${String(finder)}" for title="${animeTitle}"`
-        );
-        url = await resolveAniPubEpisodeLink(finder, episode);
-      } else {
-        console.warn(
-          `[STREAM] [AniPub] search returned no usable identifier for title="${animeTitle}" data=${JSON.stringify(searchData).slice(0, 500)}`
-        );
+    if (numericId) {
+      console.log(
+        `[STREAM] [AniPub] search matched id="${numericId}" (name="${match?.Name ?? "?"}")`
+      );
+      const url = await resolveAniPubEpisodeLink(numericId, episode);
+      if (url) {
+        return {
+          slug,
+          episode,
+          sources: [buildAniPubSource(url)],
+          subtitles: [],
+        };
       }
     } else {
-      const reason = searchRes.error
-        ? `type="${searchRes.error.type}" status="${searchRes.error.status}" message="${searchRes.error.message}" rawBody="${searchRes.error.rawBody ?? ""}"`
-        : "unknown error";
       console.warn(
-        `[STREAM] [AniPub] search failed for title="${animeTitle}" — ${reason}`
+        `[STREAM] [AniPub] no numeric id in search results q="${query}" candidates=${candidates.length} data=${JSON.stringify(searchRes.data).slice(0, 400)}`
       );
     }
+  } else {
+    const reason = searchRes.error
+      ? `type="${searchRes.error.type}" status="${searchRes.error.status}" message="${searchRes.error.message}" rawBody="${searchRes.error.rawBody ?? ""}"`
+      : "unknown error";
+    console.warn(`[STREAM] [AniPub] search failed q="${query}" — ${reason}`);
   }
 
-  /* ---------------------------------------------------------------- */
-  /* 3) Resolved via AniPub                                            */
-  /* ---------------------------------------------------------------- */
-  if (url) {
-    const sources: StreamingSource[] = [
-      {
-        id: "anipub",
-        name: "AniPub",
-        url,
-        quality: "auto",
-        default: true,
-      },
-    ];
-
-    return { slug, episode, sources, subtitles: [] };
-  }
-
-  /* ---------------------------------------------------------------- */
-  /* 4) No valid source found                                           */
-  /* ---------------------------------------------------------------- */
   console.error(
     `[STREAM] [AniPub] NO_VALID_SOURCE slug="${slug}" (cleaned="${clean}") ep=${episode} — AniPub lookup failed`
   );

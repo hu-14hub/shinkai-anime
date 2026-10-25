@@ -314,7 +314,8 @@
     "theaterOn": "Theater mode on",
     "connecting": "Connecting…",
     "noSources": "No sources available",
-    "noSourcesMsg": "No playable stream was found for this episode. Check your connection and try again."
+    "noSourcesMsg": "No playable stream was found for this episode. Check your connection and try again.",
+    "openInNewTab": "Open in new tab"
   },
   "schedule": {
     "title": "Weekly Schedule",
