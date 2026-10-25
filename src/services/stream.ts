@@ -199,19 +199,35 @@ async function resolveAniPubEpisodeLink(
   }
 
   const data = result.data as Record<string, unknown>;
-  const local = data?.local as Record<string, unknown> | undefined;
-  const epArray = local?.ep;
+  const local = data?.local;
 
-  if (!Array.isArray(epArray) || epArray.length === 0) {
-    console.warn(
-      `[STREAM] [AniPub] no episode array for identifier="${identifier}" ep=${episode}`
-    );
-    return null;
+  // AniPub's /v1/api/details/:id returns the data shape:
+  //   { local: { name, finder, link, type, ep: [{link}, ...], ... } }
+  // Two layouts are observed in the wild (verified against the live API):
+  //   (A) `local` is the *episode-1 object*:
+  //         local.link = ep1,  local.ep[] = ep2..epN   (the common case)
+  //   (B) `local` is an *array* of episode objects (a legacy/alternate layout).
+  //     -> local[0] = ep1, local[1] = ep2, ...
+  // We handle both. Episode numbers are 1-based.
+  let rawLink: string | null = null;
+
+  if (typeof local === "object" && local !== null && !Array.isArray(local)) {
+    const loc = local as Record<string, unknown>;
+    if (episode === 1) {
+      // Episode 1 lives on `local.link` itself (NOT inside local.ep).
+      rawLink = typeof loc.link === "string" ? loc.link : null;
+    } else {
+      // Episodes 2..N live in `local.ep`, 0-indexed -> ep 2 is ep[0].
+      const epArray = loc.ep;
+      if (Array.isArray(epArray)) {
+        const item = epArray[episode - 2] as Record<string, unknown> | undefined;
+        rawLink = typeof item?.link === "string" ? item.link : null;
+      }
+    }
+  } else if (Array.isArray(local)) {
+    const item = local[episode - 1] as Record<string, unknown> | undefined;
+    rawLink = typeof item?.link === "string" ? item.link : null;
   }
-
-  // Episode numbers are 1-based; the array is 0-indexed.
-  const epItem = epArray[episode - 1];
-  const rawLink = epItem?.link;
 
   if (typeof rawLink !== "string" || rawLink.length === 0) {
     console.warn(
@@ -239,22 +255,23 @@ async function resolveAniPubEpisodeLink(
 /**
  * Classify a resolved AniPub URL into a playback mechanism.
  *
- * AniPub returns third-party *web-page* embed links (e.g. gogoanime
- * `streaming.php?id=...&ep=...`) rather than direct media files. Those cannot
- * be played by hls.js / `<video src>` and must be rendered inside an
- * `<iframe>`. Direct media URLs (`.m3u8` / `.mp4` / …) are the `hls` kind.
+ * AniPub is a web aggregator — its details API **always** returns web-page
+ * URLs (e.g. gogoanime `streaming.php?id=...&ep=...` or `anipub.org/play/...`),
+ * never direct media files. Every path on the site is a full page that must be
+ * rendered inside an `<iframe>` because it supplies its own player, controls,
+ * and tracking.
+ *
+ * Only an explicit media-file extension (`.m3u8` / `.mp4`) is treated as a
+ * native `<video>` / hls.js source. This inverted default ensures any
+ * unexpected AniPub URL shape is safely handled by the iframe renderer
+ * rather than being fed to a native video element.
  */
 function classifySource(url: string): { kind: "hls" | "iframe"; isHls: boolean } {
-  const looksLikeIframe =
-    /(streaming|video|watch|player)\.php/i.test(url) ||
-    /\.php(\?|$)/i.test(url) ||
-    /\/video\//i.test(url) ||
-    /\.(html?|aspx|jsp)(\?|$)/i.test(url);
-
-  if (looksLikeIframe) return { kind: "iframe", isHls: false };
-
-  const isHls = /\.m3u8(\?|$)/i.test(url);
-  return { kind: "hls", isHls };
+  // Explicit media-file extension → native <video> or hls.js.
+  const isMediaFile = /\.(m3u8|mp4)(\?|$)/i.test(url);
+  if (isMediaFile) return { kind: "hls", isHls: /\.m3u8(\?|$)/i.test(url) };
+  // Everything else is a web page → render in an <iframe>.
+  return { kind: "iframe", isHls: false };
 }
 
 /** Build the single AniPub streaming source for a resolved episode URL. */
