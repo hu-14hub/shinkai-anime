@@ -28,7 +28,7 @@ export default async function WatchPage({ params, searchParams }: {
   if (!anime) notFound();
   const num = Math.min(Math.max(parseInt(ep ?? "1", 10) || 1, 1), anime.episodes.length);
   const BackIcon = locale === "ar" ? ArrowRight : ArrowLeft;
-  const stream = getEpisodeStream(slug, num, anime.title[locale]);
+  const stream = await getEpisodeStream(slug, num, anime.title[locale]);
   const current = anime.episodes[num - 1];
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-10 px-4 py-8 sm:px-6 sm:py-10">
