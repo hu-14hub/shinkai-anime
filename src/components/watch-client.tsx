@@ -71,7 +71,7 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
         }
       })
       .catch(() => {
-        /* aborted or network error — keep the SSR/fallback sources */
+        /* aborted or network error — keep the SSR sources */
       })
       .finally(() => {
         if (!controller.signal.aborted) setStreamLoading(false);
@@ -83,9 +83,8 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
   const hasNext = num < anime.episodes.length;
   const hasPrev = num > 1;
   // Effective sources/subtitles: live sources once resolved, otherwise
-  // the SSR demo stream (instant first paint + graceful fallback). The pill
-  // list and the player both read this single array, so a live swap updates
-  // both.
+  // the SSR sources from the page. The pill list and the player both read
+  // this single array, so a live swap updates both.
   const activeSources = liveStream?.sources?.length ? liveStream.sources : stream.sources;
   const activeSubtitles = liveStream?.subtitles?.length ? liveStream.subtitles : stream.subtitles;
   // The currently-selected HTTP/HLS server.

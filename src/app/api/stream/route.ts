@@ -13,8 +13,8 @@ export const dynamic = "force-dynamic";
  * GET /api/stream?episode=N&title=<anime title>[&slug=<slug>]
  *
  * Resolves streaming sources for an episode via AniPub's API
- * (https://anipub.org/v1/api/details/:id). Falls back to the demo stream if
- * AniPub is unreachable or returns no usable source for the episode.
+ * (https://anipub.org/v1/api/details/:id). Returns 404 if AniPub cannot
+ * resolve a valid source for the episode.
  *
  * Kept purely request-driven (reads the query string), so it is dynamic at
  * runtime and is never executed during `next build`.
@@ -25,14 +25,22 @@ export async function GET(req: Request) {
   const title = searchParams.get("title") ?? "";
   const slug = searchParams.get("slug") ?? "";
 
-  // Resolve stream from AniPub (falls back to demo on failure).
+  // Resolve stream from AniPub.
   const stream = await getEpisodeStream(
     slug || `episode-${episode}`,
     episode,
     title
   );
+
+  if (!stream || !stream.sources.length) {
+    return NextResponse.json(
+      { error: "No streaming source available for this episode" },
+      { status: 404 }
+    );
+  }
+
   return NextResponse.json({
     ...stream,
-    source: stream.sources[0]?.id ?? "demo",
+    source: stream.sources[0]?.id,
   });
 }

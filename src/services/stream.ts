@@ -1,29 +1,12 @@
 /**
- * Resolves playable sources + subtitle tracks for an episode.
+ * Resolves playable sources + subtitle tracks for an episode via AniPub's API.
  *
- * In this template there is no production video backend, so a reliable public
- * HLS sample stream is used as the fallback when no live source can be
- * resolved. The admin CRUD (AdminAnime.episodes[].sources/subtitles) is the
- * integration point for real server URLs — swap `getEpisodeStream` to read
- * from your CMS/CDN.
+ * Returns null when AniPub cannot resolve a valid episode link. The admin
+ * CRUD (AdminAnime.episodes[].sources/subtitles) is the integration point
+ * for real server URLs — swap `getEpisodeStream` to read from your CMS/CDN.
  */
 
 import type { EpisodeStream, StreamingSource, SubtitleTrack } from "@/types";
-
-/**
- * Built-in public test HLS stream used when live sources cannot be resolved.
- *
- * `test-streams.mux.dev/x36xhzz` is a well-known, long-running adaptive HLS
- * sample (Big Buck Bunny) served with `Access-Control-Allow-Origin: *`, so it
- * plays directly in the browser without a proxy. It is a valid *master*
- * playlist, so hls.js auto-adapts across the encoded qualities.
- *
- * Override via `NEXT_PUBLIC_FALLBACK_HLS` in `.env.local` to point at any
- * other publicly-reachable, CORS-friendly .m3u8.
- */
-const FALLBACK_HLS =
-  process.env.NEXT_PUBLIC_FALLBACK_HLS ||
-  "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
 
 const ANIPUB_BASE = "https://anipub.org";
 
@@ -253,12 +236,15 @@ async function resolveAniPubEpisodeLink(
   return urlResolved;
 }
 
-/** Map an episode to its streaming sources & subtitle tracks. */
+/** Map an episode to its streaming sources & subtitle tracks.
+ *
+ * Returns null when AniPub cannot resolve a valid episode link.
+ */
 export async function getEpisodeStream(
   slug: string,
   episode: number,
   animeTitle?: string
-): Promise<EpisodeStream> {
+): Promise<EpisodeStream | null> {
   const clean = cleanSlug(slug);
 
   /* ---------------------------------------------------------------- */
@@ -328,25 +314,10 @@ export async function getEpisodeStream(
   }
 
   /* ---------------------------------------------------------------- */
-  /* 4) Fallback: demo stream                                         */
+  /* 4) No valid source found                                           */
   /* ---------------------------------------------------------------- */
   console.error(
-    `[STREAM] [AniPub] NO_VALID_SOURCE slug="${slug}" (cleaned="${clean}") ep=${episode} — falling back to Demo stream`
+    `[STREAM] [AniPub] NO_VALID_SOURCE slug="${slug}" (cleaned="${clean}") ep=${episode} — AniPub lookup failed`
   );
-
-  const sources: StreamingSource[] = [
-    {
-      id: "demo",
-      name: "Demo",
-      url: FALLBACK_HLS,
-      quality: "auto",
-      default: true,
-      isHls: true,
-    },
-  ];
-
-  // No bundled subtitle tracks with the demo stream.
-  const subtitles: SubtitleTrack[] = [];
-
-  return { slug, episode, sources, subtitles };
+  return null;
 }

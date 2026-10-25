@@ -30,6 +30,17 @@ export default async function WatchPage({ params, searchParams }: {
   const BackIcon = locale === "ar" ? ArrowRight : ArrowLeft;
   const stream = await getEpisodeStream(slug, num, anime.title[locale]);
   const current = anime.episodes[num - 1];
+
+  if (!stream || !stream.sources.length) {
+    return (
+      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-10 px-4 py-8 sm:px-6 sm:py-10">
+        <div className="text-center py-20">
+          <h2 className="text-xl font-semibold text-white">Streaming source unavailable</h2>
+          <p className="mt-2 text-neutral-400">AniPub could not resolve a stream for this episode. Please try another episode.</p>
+        </div>
+      </main>
+    );
+  }
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-10 px-4 py-8 sm:px-6 sm:py-10">
       <div>
