@@ -11,8 +11,7 @@
 import type { EpisodeStream, StreamingSource, SubtitleTrack } from "@/types";
 
 /**
- * Built-in public test HLS stream used when live (Consumet/HiAnime)
- * sources cannot be resolved.
+ * Built-in public test HLS stream used when live sources cannot be resolved.
  *
  * `test-streams.mux.dev/x36xhzz` is a well-known, long-running adaptive HLS
  * sample (Big Buck Bunny) served with `Access-Control-Allow-Origin: *`, so it
@@ -44,8 +43,7 @@ export function getEpisodeStream(
   ];
 
   // No bundled subtitle tracks with the demo stream — the previously referenced
-  // host no longer resolves. Real subtitles are provided by the live resolver
-  // (`consumet.ts`) once it returns a track for the active source.
+  // host no longer resolves.
   const subtitles: SubtitleTrack[] = [];
 
   return { slug, episode, sources, subtitles };

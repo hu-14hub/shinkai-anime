@@ -23,9 +23,9 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
 }) {
   const router = useRouter();
   const [reported, setReported] = useState(false);
-  // Live streaming sources fetched client-side from the Consumet proxy
-  // (/api/stream). The SSR `stream` prop is the instant fallback; once the
-  // live sources resolve (on mount + every episode change) we swap to them.
+  // Live streaming sources fetched client-side from the /api/stream route.
+  // The SSR `stream` prop is the instant fallback; once the live sources
+  // resolve (on mount + every episode change) we swap to them.
   const [liveStream, setLiveStream] = useState<EpisodeStream | null>(null);
   const [streamLoading, setStreamLoading] = useState(true);
   // Track which server pill is active. Reset on episode change — client
@@ -82,7 +82,7 @@ export function WatchClient({ slug, num, anime, stream, locale, dict: t }: {
   const current = anime.episodes[num - 1];
   const hasNext = num < anime.episodes.length;
   const hasPrev = num > 1;
-  // Effective sources/subtitles: live Consumet sources once resolved, otherwise
+  // Effective sources/subtitles: live sources once resolved, otherwise
   // the SSR demo stream (instant first paint + graceful fallback). The pill
   // list and the player both read this single array, so a live swap updates
   // both.
