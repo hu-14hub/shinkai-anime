@@ -276,9 +276,9 @@ function buildAniPubSource(url: string): StreamingSource {
  * Resolution flow (browser-safe — runs client-side so Vercel's blocked
  * server-side requests are never involved):
  *   1. Search AniPub by the anime title (or cleaned slug) — `/api/search/:q`.
- *   2. AniPub returns a JSON *array* of candidates; pick the best match by
- *      numeric `Id` (the details endpoint requires the numeric Id — the
- *      `finder` slug returns an internal server error).
+ *   2. AniPub returns a JSON *array* of candidates OR a *single* result object
+ *      — both are normalised. Pick the best match and prefer its numeric `Id`
+ *      (with the `finder` slug as a fallback) for the details lookup.
  *   3. Fetch `/v1/api/details/:id` and pick the (1-based) episode's `link`.
  *   4. Classify that link (`iframe` vs `hls`) and return it as a source.
  *
@@ -300,33 +300,48 @@ export async function getEpisodeStream(
   const searchRes = await fetchWithDebug(searchUrl);
 
   if (searchRes.ok && searchRes.data) {
-    // AniPub returns a JSON *array* of candidates.
-    const candidates: AniPubSearchResult[] = Array.isArray(searchRes.data)
-      ? (searchRes.data as AniPubSearchResult[])
-      : [];
+    // AniPub's /api/search/:q is inconsistent about its response shape — it can
+    // return a JSON *array* of candidates OR a *single* result object
+    // (e.g. {"Name":"Overgeared","Id":8473,"finder":"overgeared",...}).
+    // Normalise both into an array so a single-object response is never
+    // silently dropped (that was the "no numeric id" false negative).
+    const raw = searchRes.data;
+    const candidates: AniPubSearchResult[] = Array.isArray(raw)
+      ? (raw as AniPubSearchResult[])
+      : [raw as AniPubSearchResult];
 
-    const hasNumericId = (c: AniPubSearchResult) =>
+    const hasNumericId = (c: AniPubSearchResult): c is AniPubSearchResult & { Id: number | string } =>
       typeof c.Id === "number" ||
       (typeof c.Id === "string" && /^\d+$/.test(c.Id));
+
+    const finderOf = (c: AniPubSearchResult | undefined): string | null =>
+      c && typeof c.finder === "string" && c.finder.trim() ? c.finder.trim() : null;
 
     // Prefer an exact finder/slug match, then a name match, then the first
     // candidate carrying a numeric Id.
     const match =
-      candidates.find((c) => c.finder && c.finder === clean) ??
+      candidates.find((c) => finderOf(c) === clean) ??
       candidates.find(
         (c) =>
           typeof c.Name === "string" &&
-          c.Name.toLowerCase() === clean.toLowerCase()
+          c.Name.trim().toLowerCase() === clean.toLowerCase()
       ) ??
       candidates.find(hasNumericId);
 
-    const numericId = match && hasNumericId(match) ? String(match.Id) : null;
+    // Resolve which identifier to send to /v1/api/details/:id. The details
+    // endpoint requires the numeric Id (the finder slug is less reliable, but
+    // is a valid fallback). Prefer the numeric Id when present — a value like
+    // 8473 is a perfectly valid numeric id and must not be rejected.
+    const detailId =
+      (match && hasNumericId(match) ? String(match.Id) : null) ??
+      finderOf(match) ??
+      null;
 
-    if (numericId) {
+    if (detailId) {
       console.log(
-        `[STREAM] [AniPub] search matched id="${numericId}" (name="${match?.Name ?? "?"}")`
+        `[STREAM] [AniPub] search matched detailId="${detailId}" (name="${match?.Name ?? "?"}", finder="${finderOf(match) ?? "?"}")`
       );
-      const url = await resolveAniPubEpisodeLink(numericId, episode);
+      const url = await resolveAniPubEpisodeLink(detailId, episode);
       if (url) {
         return {
           slug,
@@ -337,7 +352,7 @@ export async function getEpisodeStream(
       }
     } else {
       console.warn(
-        `[STREAM] [AniPub] no numeric id in search results q="${query}" candidates=${candidates.length} data=${JSON.stringify(searchRes.data).slice(0, 400)}`
+        `[STREAM] [AniPub] no usable id/finder in search results q="${query}" candidates=${candidates.length} data=${JSON.stringify(raw).slice(0, 400)}`
       );
     }
   } else {
