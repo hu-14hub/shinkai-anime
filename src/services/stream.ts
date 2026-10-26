@@ -314,7 +314,7 @@ export function buildTorrentSource(magnetUrl: string): StreamingSource {
   )}`;
   return {
     id: "torrent",
-    name: "Torrent",
+    name: "Torrent (Nyaa)",
     url,
     quality: "auto",
     default: true,
@@ -344,7 +344,7 @@ function buildTorrentSourceFromResult(r: NyaaTorrentResult): StreamingSource {
   )}`;
   return {
     id: "torrent",
-    name: "Torrent",
+    name: "Torrent (Nyaa)",
     url,
     quality: "auto",
     default: true,
@@ -469,49 +469,40 @@ async function fetchTorrentSource(
   return null;
 }
 
-/** Map an episode to its streaming sources & subtitle tracks.
+/**
+ * Resolve a single AniPub streaming source for an episode, or `null` when
+ * AniPub cannot produce a valid episode link.
  *
- * Resolution flow (browser-safe — runs client-side so Vercel's blocked
- * server-side requests are never involved):
+ * This is the standalone web-embed provider. It is NO LONGER a silent
+ * fallback behind the torrent path — it runs as its own independent source and
+ * is exposed to the UI as a separate, selectable server option (see
+ * `getEpisodeStream`). The resolution flow is unchanged from what was
+ * inlined in `getEpisodeStream` before:
+ *
  *   1. Search AniPub by the anime title (or cleaned slug) — `/api/search/:q`.
- *   2. AniPub returns a JSON *array* of candidates OR a *single* result object
- *      — both are normalised. Pick the best match and prefer its numeric `Id`
- *      (with the `finder` slug as a fallback) for the details lookup.
+ *   2. Normalise the response (array or single-object) into a candidates list.
+ *      Prefer an exact `finder` match, then a `Name` match, then the first
+ *      candidate with a numeric `Id`.
  *   3. Fetch `/v1/api/details/:id` and pick the (1-based) episode's `link`.
  *   4. Classify that link (`iframe` vs `hls`) and return it as a source.
  *
- * Returns null when AniPub cannot resolve a valid episode link.
+ * `slug` is used only for the (cleaned) search fallback + logging, so a
+ * caller can pass `""` when it has no slug; the search `query` is
+ * normalised by the caller.
  */
-export async function getEpisodeStream(
+async function resolveAniPubSource(
   slug: string,
-  episode: number,
-  animeTitle?: string
-): Promise<EpisodeStream | null> {
+  query: string,
+  episode: number
+): Promise<StreamingSource | null> {
   const clean = cleanSlug(slug);
-  const query = (animeTitle && animeTitle.trim()) || clean;
-
-  // PRIMARY: the local WebTorrent backend — it scrapes nyaa.si for a magnet and
-  // streams it as a seekable progressive file (native <video>, full HTTP Range).
-  // This is the first-class source for this app. When the backend isn't running
-  // or has no matching torrent, we fall through to the web-embed path below.
-  const torrentSource = await fetchTorrentSource(query, episode);
-  if (torrentSource) {
-    console.log(
-      `[STREAM] [Torrent] using WebTorrent backend source for "${query}" ep=${episode}`
-    );
-    return { slug, episode, sources: [torrentSource], subtitles: [] };
-  }
-
-  console.log(
-    `[STREAM] [AniPub] fallback: no torrent source, trying AniPub q="${query}" slug="${slug}" (cleaned="${clean}") ep=${episode}`
-  );
   const searchUrl = `${ANIPUB_BASE}/api/search/${encodeURIComponent(query)}`;
 
   const searchRes = await fetchWithDebug(searchUrl);
 
   if (searchRes.ok && searchRes.data) {
-    // AniPub's /api/search/:q is inconsistent about its response shape — it can
-    // return a JSON *array* of candidates OR a *single* result object
+    // AniPub's /api/search/:q is inconsistent about its response shape — it
+    // can return a JSON *array* of candidates OR a *single* result object
     // (e.g. {"Name":"Overgeared","Id":8473,"finder":"overgeared",...}).
     // Normalise both into an array so a single-object response is never
     // silently dropped (that was the "no numeric id" false negative).
@@ -527,8 +518,6 @@ export async function getEpisodeStream(
     const finderOf = (c: AniPubSearchResult | undefined): string | null =>
       c && typeof c.finder === "string" && c.finder.trim() ? c.finder.trim() : null;
 
-    // Prefer an exact finder/slug match, then a name match, then the first
-    // candidate carrying a numeric Id.
     const match =
       candidates.find((c) => finderOf(c) === clean) ??
       candidates.find(
@@ -538,10 +527,6 @@ export async function getEpisodeStream(
       ) ??
       candidates.find(hasNumericId);
 
-    // Resolve which identifier to send to /v1/api/details/:id. The details
-    // endpoint requires the numeric Id (the finder slug is less reliable, but
-    // is a valid fallback). Prefer the numeric Id when present — a value like
-    // 8473 is a perfectly valid numeric id and must not be rejected.
     const detailId =
       (match && hasNumericId(match) ? String(match.Id) : null) ??
       finderOf(match) ??
@@ -553,12 +538,7 @@ export async function getEpisodeStream(
       );
       const url = await resolveAniPubEpisodeLink(detailId, episode);
       if (url) {
-        return {
-          slug,
-          episode,
-          sources: [buildAniPubSource(url)],
-          subtitles: [],
-        };
+        return buildAniPubSource(url);
       }
     } else {
       console.warn(
@@ -572,8 +552,76 @@ export async function getEpisodeStream(
     console.warn(`[STREAM] [AniPub] search failed q="${query}" — ${reason}`);
   }
 
-  console.error(
+  console.warn(
     `[STREAM] [AniPub] NO_VALID_SOURCE slug="${slug}" (cleaned="${clean}") ep=${episode} — AniPub lookup failed`
   );
   return null;
+}
+
+/**
+ * Map an episode to its streaming sources & subtitle tracks, exposing every
+ * provider that can play it as an INDEPENDENT, user-selectable server:
+ *   - "Torrent (Nyaa)" — the local WebTorrent backend (nyaa.si magnet → a
+ *     seekable progressive file, native `<video>`).
+ *   - "AniPub"         — the web-embed provider (an `<iframe>` page).
+ *
+ * Both providers are resolved in PARALLEL (`Promise.all`). When both succeed,
+ * the returned `sources` array carries one entry per provider and the UI's
+ * server pill row renders them side-by-side so the user can switch between
+ * Torrent and AniPub at any time. When one fails it is simply omitted (no
+ * source entry) and the other is returned; we return null only when NEITHER
+ * can produce a valid source.
+ *
+ * The first-resolved source is marked `default` so the player opens on a
+ * working stream out of the box (Torrent first — the first-class, seekable
+ * source for this app; AniPub when no torrent is available).
+ *
+ * Browser-safe: runs client-side so Vercel's blocked server-side requests are
+ * never involved.
+ */
+export async function getEpisodeStream(
+  slug: string,
+  episode: number,
+  animeTitle?: string
+): Promise<EpisodeStream | null> {
+  const clean = cleanSlug(slug);
+  const query = (animeTitle && animeTitle.trim()) || clean;
+
+  console.log(
+    `[STREAM] resolving episode "${query}" ep=${episode} slug="${slug}" (cleaned="${clean}") — torrent + anipub in parallel`
+  );
+
+  // Resolve both providers independently. fetchTorrentSource already fails
+  // closed (returns null on any error), and resolveAniPubSource returns null
+  // when it cannot resolve a link, so neither can throw and abort the pair.
+  const [torrentSource, anipubSource] = await Promise.all([
+    fetchTorrentSource(query, episode),
+    resolveAniPubSource(slug, query, episode),
+  ]);
+
+  const selected = [torrentSource, anipubSource].filter(
+    (s): s is StreamingSource => Boolean(s)
+  );
+
+  if (selected.length === 0) {
+    console.error(
+      `[STREAM] NO_VALID_SOURCE slug="${slug}" (cleaned="${clean}") ep=${episode} — both Torrent (Nyaa) and AniPub failed`
+    );
+    return null;
+  }
+
+  // Every entry carries default:true from its builder; re-mark so exactly one
+  // (the first — Torrent, since it is the first-class seekable source) is the
+  // auto-played default and the rest are plain switchable options.
+  for (const [i, s] of selected.entries()) {
+    s.default = i === 0 ? true : undefined;
+  }
+
+  console.log(
+    `[STREAM] ready slug="${slug}" ep=${episode} sources=[${selected
+      .map((s) => s.name)
+      .join(", ")}] default="${selected[0].name}"`
+  );
+
+  return { slug, episode, sources: selected, subtitles: [] };
 }

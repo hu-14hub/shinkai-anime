@@ -8,3 +8,6 @@
 [doh] lookup nyaa.si -> 186.2.163.20 (family=4, source=doh:cloudflare)
 [doh] cache: nyaa.si -> 186.2.163.20 (ttl=282s, source=doh:cloudflare)
 [doh] lookup nyaa.si -> 186.2.163.20 (family=4, source=doh:cloudflare)
+[doh] cache: nyaa.si -> 186.2.163.20 (ttl=164s, source=doh:cloudflare)
+[doh] lookup nyaa.si -> 186.2.163.20 (family=4, source=doh:cloudflare)
+[torrent] Request: magnet:?xt=urn:btih:7a9206bfac771270808c6deca0a46785fa2600d0&dn=%5BYameii%5D%20Overgeared%20-%20S01E…
