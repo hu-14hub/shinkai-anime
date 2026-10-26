@@ -1,21 +1,13 @@
 /**
- * Shinkai Anime — WebTorrent streaming backend.
+ * Shinkai Anime — WebTorrent streaming + Nyaa search backend.
  *
  * Endpoints:
+ *   GET /api/torrent/search?query=<title>&episode=<n>[&limit=<n>]  (→ magnet links)
  *   GET /api/torrent/stream?magnet=<BASE64-or-plain-magnet-link>
  *   GET /health
  *
- * Flow:
- *   1. Parse the magnet link from the query string (plain or base64-encoded).
- *   2. Add the torrent to a shared WebTorrent instance and wait for metadata.
- *   3. Pick the largest video file from the torrent.
- *   4. Stream that file back with full HTTP Range support so the browser's
- *      <video> element can seek without re-buffering from zero.
- *
  * Why a separate Node process:
  *   WebTorrent spins up BitTorrent peer connections, DHT, UDP sockets, etc.
- *   It cannot (or should not) be run inside a Vercel / serverless function —
- *   those have execution limits, no persistent connections, and no UDP.
  *   This backend must run as a long-lived Node.js process.
  *
  * Run:
@@ -27,6 +19,7 @@
 import express from "express";
 import cors from "cors";
 import WebTorrent from "webtorrent";
+import torrentSearchRouter from "./src/routes/torrent.js";
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 /** Max seconds to wait for metadata before returning 504. */
@@ -35,24 +28,22 @@ const METADATA_TIMEOUT_MS = 120_000;
 const app = express();
 app.use(cors());
 
+// Nyaa.si search → magnet links. Mounted so the public path is
+//   GET /api/torrent/search?query=<title>&episode=<n>
+// The router only owns "/search"; other /api/torrent/* paths (e.g. /stream)
+// are registered directly on `app` below.
+app.use("/api/torrent", torrentSearchRouter);
+
 // Single shared WebTorrent instance — reuses the same DHT / peer pool across
-// requests, so the torrent stays alive and a second request for the same
-// magnet hits the peer cache instead of re-discovering everything.
-//
-// `noWebRTC: true` is required: WebRTC peer discovery (node-datachannel)
-// hangs in environments where the native binary is unavailable.
-// BT over TCP + DHT + trackers is fully sufficient for a single-server
-// streaming backend and avoids that hang entirely.
+// requests. `noWebRTC: true` avoids a native-binary hang in headless envs and
+// TCP + DHT + trackers is fully sufficient for a single-server streamer.
 const client = new WebTorrent({ noWebRTC: true });
+
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
-/**
- * Accept magnet links in any of these forms:
- *   - plain:  "magnet:?xt=urn:btih:…"
- *   - base64  (standard or URL-safe):  Buffer.from(b64).toString("utf8")
- */
+/** Accept a magnet link plain, or base64 (standard / URL-safe) encoded. */
 function decodeMagnet(raw) {
   if (!raw || typeof raw !== "string") return null;
   const s = raw.trim();
@@ -71,10 +62,7 @@ function decodeMagnet(raw) {
 
 const VIDEO_RE = /\.(mp4|mkv|webm|m4v|avi|mov|flv|wmv|ts)$/i;
 
-/**
- * Return the index of the largest video file, or the largest file at all
- * if no extension matches.  Returns -1 when the torrent has no files.
- */
+/** Index of the largest video file (or largest file if none match). -1 if empty. */
 function bestVideoIndex(meta) {
   let bestIdx = -1;
   let bestSize = -1;
@@ -99,7 +87,7 @@ function bestVideoIndex(meta) {
 }
 
 /**
- * Stream a WebTorrentFile with full HTTP Range request support.
+ * Stream a WebTorrentFile with full HTTP Range support.
  *   - No Range header (or bytes=0-)  → 200 + full file
  *   - bytes=START-END                → 206 + that byte range
  */
@@ -124,6 +112,19 @@ function streamFile(wtFile, req, res) {
     }
   }
 
+  res.writeHead(isPartial ? 206 : 200, {
+    ...(isPartial ? { "Content-Range": `bytes ${start}-${end}/${total}` } : {}),
+    "Accept-Ranges": "bytes",
+    "Content-Length": isPartial ? end - start + 1 : total,
+    "Content-Type": "video/mp4",
+    "Access-Control-Allow-Origin": "*",
+  });
+
+  const stream = wtFile.createReadStream({ start, end: isPartial ? end : undefined });
+  stream.pipe(res);
+  stream.on("error", (err) => console.error("[stream] file error:", err.message));
+  req.on("close", () => stream.destroy());
+}
 /* ------------------------------------------------------------------ */
 /* Routes                                                              */
 /* ------------------------------------------------------------------ */
@@ -192,5 +193,8 @@ app.get("/health", (_req, res) => {
 app.listen(PORT, () => {
   console.log(`\n🎬 Shinkai WebTorrent backend → http://localhost:${PORT}`);
   console.log(`   Health:  http://localhost:${PORT}/health`);
+  console.log(
+    `   Search:  http://localhost:${PORT}/api/torrent/search?query=…&episode=…`
+  );
   console.log(`   Stream:  http://localhost:${PORT}/api/torrent/stream?magnet=…\n`);
 });

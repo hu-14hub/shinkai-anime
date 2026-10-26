@@ -323,6 +323,96 @@ export function buildTorrentSource(magnetUrl: string): StreamingSource {
   };
 }
 
+/** Shape of one torrent candidate returned by /api/torrent/search (backend). */
+interface NyaaTorrentResult {
+  title: string;
+  seeders: number;
+  leeches: number;
+  size: string | null;
+  sizeBytes: number;
+  /** `magnet:?xt=urn:btih:…` link. */
+  magnet: string;
+  /** Direct .torrent / nyaa.view URL (non-magnet), when available. */
+  url: string | null;
+}
+
+/** Wrap the backend's top magnet result in a playable progressive source. */
+function buildTorrentSourceFromResult(r: NyaaTorrentResult): StreamingSource {
+  const payload = btoa(r.magnet);
+  const url = `${TORRENT_API_BASE}/api/torrent/stream?magnet=${encodeURIComponent(
+    payload
+  )}`;
+  return {
+    id: "torrent",
+    name: "Torrent",
+    url,
+    quality: "auto",
+    default: true,
+    kind: "hls",
+    isHls: false,
+  };
+}
+
+/**
+ * Ask the local WebTorrent backend for the best magnet for a title + episode.
+ *
+ * Hits `${TORRENT_API_BASE}/api/torrent/search?query=…&episode=…` (the nyaa.si
+ * scraper). Returns a READY-TO-PLAY progressive source built from the top
+ * magnet, or `null` when the backend is offline / blocked / has no result.
+ *
+ * We fail CLOSED here on purpose: any error means "no torrent source", which
+ * lets the caller silently fall through to the web-embed (AniPub) path.
+ */
+async function fetchTorrentSource(
+  query: string,
+  episode: number
+): Promise<StreamingSource | null> {
+  try {
+    const params = new URLSearchParams({
+      query,
+      ...(episode ? { episode: String(episode) } : {}),
+    });
+    const url = `${TORRENT_API_BASE}/api/torrent/search?${params.toString()}`;
+
+    const controller = new AbortController();
+    // The backend scr5ape-s nyaa.si itself (up to ~15 s); 10 s keeps the player
+    // from hanging when the backend is slow or the network is down.
+    const timeoutId = setTimeout(() => controller.abort(), 10_000);
+    let res: Response;
+    try {
+      res = await fetch(url, { signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!res.ok) {
+      console.warn(`[STREAM] [Nyaa] search not ok → HTTP ${res.status} for "${query}" ep=${episode}`);
+      return null;
+    }
+
+    const data = (await res.json()) as {
+      best?: NyaaTorrentResult | null;
+      results?: NyaaTorrentResult[];
+    };
+    const best = data.best ?? data.results?.[0];
+    if (best?.magnet) {
+      console.log(
+        `[STREAM] [Nyaa] matched "${best.title}" (seeders=${best.seeders}, ${best.size}) for "${query}" ep=${episode}`
+      );
+      return buildTorrentSourceFromResult(best);
+    }
+    console.warn(`[STREAM] [Nyaa] no magnet returned for "${query}" ep=${episode}`);
+    return null;
+  } catch (err) {
+    console.warn(
+      `[STREAM] [Nyaa] search failed for "${query}" ep=${episode}: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+    return null;
+  }
+}
+
 /** Map an episode to its streaming sources & subtitle tracks.
  *
  * Resolution flow (browser-safe — runs client-side so Vercel's blocked
@@ -343,11 +433,23 @@ export async function getEpisodeStream(
 ): Promise<EpisodeStream | null> {
   const clean = cleanSlug(slug);
   const query = (animeTitle && animeTitle.trim()) || clean;
-  const searchUrl = `${ANIPUB_BASE}/api/search/${encodeURIComponent(query)}`;
+
+  // PRIMARY: the local WebTorrent backend — it scrapes nyaa.si for a magnet and
+  // streams it as a seekable progressive file (native <video>, full HTTP Range).
+  // This is the first-class source for this app. When the backend isn't running
+  // or has no matching torrent, we fall through to the web-embed path below.
+  const torrentSource = await fetchTorrentSource(query, episode);
+  if (torrentSource) {
+    console.log(
+      `[STREAM] [Torrent] using WebTorrent backend source for "${query}" ep=${episode}`
+    );
+    return { slug, episode, sources: [torrentSource], subtitles: [] };
+  }
 
   console.log(
-    `[STREAM] [AniPub] searching q="${query}" slug="${slug}" (cleaned="${clean}") ep=${episode}`
+    `[STREAM] [AniPub] fallback: no torrent source, trying AniPub q="${query}" slug="${slug}" (cleaned="${clean}") ep=${episode}`
   );
+  const searchUrl = `${ANIPUB_BASE}/api/search/${encodeURIComponent(query)}`;
 
   const searchRes = await fetchWithDebug(searchUrl);
 
