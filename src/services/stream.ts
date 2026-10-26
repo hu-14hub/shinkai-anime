@@ -1,9 +1,16 @@
 /**
- * Resolves playable sources + subtitle tracks for an episode via AniPub's API.
+ * Resolves playable sources + subtitle tracks for an episode.
  *
- * Returns null when AniPub cannot resolve a valid episode link. The admin
- * CRUD (AdminAnime.episodes[].sources/subtitles) is the integration point
- * for real server URLs — swap `getEpisodeStream` to read from your CMS/CDN.
+ * Providers (combined into a single `sources` array):
+ *   - **AniPub** — the primary/default source, resolved from AniPub's public API.
+ *   - **Tsukihime** — an operator-configured iframe-embed provider. It performs
+ *     NO scraping and NO network calls; it resolves strictly from the
+ *     `TSUKIHIME_SOURCES` registry, which you populate with embed URLs you are
+ *     legally entitled to use.
+ *
+ * Returns null when no provider can resolve a valid source for the episode.
+ * The admin CRUD (AdminAnime.episodes[].sources/subtitles) is the integration
+ * point for real server URLs — swap `getEpisodeStream` to read from your CMS/CDN.
  */
 
 import type { EpisodeStream, StreamingSource, SubtitleTrack } from "@/types";
@@ -288,18 +295,98 @@ function buildAniPubSource(url: string): StreamingSource {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* Tsukihime provider (operator-supplied iframe embeds)               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Operator-configured Tsukihime embed URLs.
+ *
+ * IMPORTANT: This resolver performs NO scraping and hits NO network endpoint.
+ * It resolves an episode solely from this explicit registry, so nothing on the
+ * source site is ever fetched, relayed, or remuxed by us. Populate it only with
+ * embed URLs you are legally entitled to embed (e.g. a provider you hold a
+ * licence for). It ships empty by default, which means the resolver is a
+ * no-op until you add entries — adding values is your responsibility to source
+ * lawfully.
+ *
+ * Shape:  { <normalised anime slug>: { [1-based episode]: <embed page URL> } }
+ */
+const TSUKIHIME_SOURCES: Record<string, Record<number, string>> = {};
+
+/** Normalise an anime identifier (slug or display title) into a stable key. */
+function normaliseTsukihimeKey(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/**
+ * Resolve a Tsukihime source for an episode.
+ *
+ * Returns a `StreamingSource` with `kind: "iframe"` when the operator has
+ * configured a valid embed URL for the episode, or `null` when the provider
+ * does not cover it. The iframe flag routes playback through the player's
+ * `<iframe>` branch (the embed page supplies its own player and controls) and
+ * is never fed to a native `<video>` element. No network requests are made.
+ */
+function resolveTsukihimeSource(
+  slug: string,
+  episode: number,
+  animeTitle?: string
+): StreamingSource | null {
+  // Try the slug-derived key first, then a title-derived key as a fallback so
+  // the lookup works whether the caller has a clean slug or a display title.
+  const keys = [normaliseTsukihimeKey(slug)];
+  if (animeTitle && animeTitle.trim()) {
+    const titleKey = normaliseTsukihimeKey(animeTitle);
+    if (titleKey && titleKey !== keys[0]) keys.push(titleKey);
+  }
+
+  for (const key of keys) {
+    const table = TSUKIHIME_SOURCES[key];
+    const embedUrl = table ? table[episode] : undefined;
+    if (!embedUrl || typeof embedUrl !== "string") continue;
+
+    // Only accept absolute URL-ish strings — guard against malformed config.
+    if (!/^[a-z][a-z0-9+.-]*:\//i.test(embedUrl)) continue;
+
+    console.log(
+      `[STREAM] [Tsukihime] resolved ep ${episode} via key="${key}" → ${embedUrl}`
+    );
+    return {
+      id: "tsukihime",
+      name: "Tsukihime",
+      url: embedUrl,
+      quality: "auto",
+      // AniPub stays the primary/default source; this is an extra server pill.
+      default: false,
+      kind: "iframe",
+      isHls: false,
+    };
+  }
+
+  return null;
+}
+
 /** Map an episode to its streaming sources & subtitle tracks.
  *
  * Resolution flow (browser-safe — runs client-side so Vercel's blocked
  * server-side requests are never involved):
- *   1. Search AniPub by the anime title (or cleaned slug) — `/api/search/:q`.
- *   2. AniPub returns a JSON *array* of candidates OR a *single* result object
+ *   1. Resolve the Tsukihime iframe-embed source (if the operator configured
+ *      one for this episode) — no network involved.
+ *   2. Search AniPub by the anime title (or cleaned slug) — `/api/search/:q`.
+ *   3. AniPub returns a JSON *array* of candidates OR a *single* result object
  *      — both are normalised. Pick the best match and prefer its numeric `Id`
  *      (with the `finder` slug as a fallback) for the details lookup.
- *   3. Fetch `/v1/api/details/:id` and pick the (1-based) episode's `link`.
- *   4. Classify that link (`iframe` vs `hls`) and return it as a source.
+ *   4. Fetch `/v1/api/details/:id` and pick the (1-based) episode's `link`.
+ *   5. Classify that link (`iframe` vs `hls`) and build the AniPub source.
+ *   6. Combine every resolved provider's source into the returned `sources`
+ *      array (AniPub is primary/default; Tsukihime is surfaced alongside it).
  *
- * Returns null when AniPub cannot resolve a valid episode link.
+ * Returns null when no provider can resolve a valid source for the episode.
  */
 export async function getEpisodeStream(
   slug: string,
@@ -313,6 +400,14 @@ export async function getEpisodeStream(
   console.log(
     `[STREAM] [AniPub] searching q="${query}" slug="${slug}" (cleaned="${clean}") ep=${episode}`
   );
+
+  // Tsukihime: operator-configured iframe-embed provider. Resolves purely from
+  // TSUKIHIME_SOURCES (empty by default) — no network or scraping involved.
+  const tsukihime = resolveTsukihimeSource(slug, episode, animeTitle);
+
+  // AniPub result is captured (not returned directly) below so it can be
+  // combined with the Tsukihime source into a single `sources` array.
+  let anipub: StreamingSource | null = null;
 
   const searchRes = await fetchWithDebug(searchUrl);
 
@@ -360,12 +455,7 @@ export async function getEpisodeStream(
       );
       const url = await resolveAniPubEpisodeLink(detailId, episode);
       if (url) {
-        return {
-          slug,
-          episode,
-          sources: [buildAniPubSource(url)],
-          subtitles: [],
-        };
+        anipub = buildAniPubSource(url);
       }
     } else {
       console.warn(
@@ -379,8 +469,24 @@ export async function getEpisodeStream(
     console.warn(`[STREAM] [AniPub] search failed q="${query}" — ${reason}`);
   }
 
-  console.error(
-    `[STREAM] [AniPub] NO_VALID_SOURCE slug="${slug}" (cleaned="${clean}") ep=${episode} — AniPub lookup failed`
+  // Combine every resolved provider into the episode's source list. AniPub is
+  // the primary/default source; Tsukihime is surfaced alongside it when the
+  // operator has configured an embed URL for this episode.
+  const sources = [anipub, tsukihime].filter(
+    (s): s is StreamingSource => s !== null
   );
-  return null;
+
+  if (!sources.length) {
+    console.error(
+      `[STREAM] NO_VALID_SOURCE slug="${slug}" (cleaned="${clean}") ep=${episode} — AniPub lookup failed and no Tsukihime embed is configured`
+    );
+    return null;
+  }
+
+  return {
+    slug,
+    episode,
+    sources,
+    subtitles: [],
+  };
 }
