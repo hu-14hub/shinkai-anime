@@ -992,38 +992,6 @@ export function VideoPlayer({
               </p>
             </div>
           )}
-          {/* Persistent fallback action — kept visible even after the frame
-              reports "loaded", because a blocked embed *also* fires onLoad and
-              would otherwise leave only a blank frame with no way out. */}
-          <a
-            href={source.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={cn(
-              "absolute right-3 top-3 z-20 flex flex-wrap items-center justify-center gap-2 rounded-xl bg-neutral-950/90 px-4 py-2.5 text-xs font-bold text-white ring-1 ring-white/20 backdrop-blur transition-all duration-300 hover:ring-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-white sm:text-sm",
-              iframeLoading
-                ? "opacity-0 group-hover:opacity-100"
-                : "opacity-100 hover:opacity-100 group-hover:opacity-100"
-            )}
-            dir="auto"
-            aria-label={dict.player.openInNewTab}
-          >
-            <span aria-hidden>Watch on {source.name} (External) </span>
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M7 17 17 7" />
-              <path d="M7 7h10v10" />
-            </svg>
-          </a>
         </div>
       )}
       {!isWrap && panel === "speed" && (
