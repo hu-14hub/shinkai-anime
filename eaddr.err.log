@@ -1,0 +1,13 @@
+node:buffer:364
+  throw new ERR_INVALID_ARG_TYPE(
+        ^
+
+TypeError [ERR_INVALID_ARG_TYPE]: The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received undefined
+    at Buffer.from (node:buffer:364:9)
+    at arr2hex (file:///C:/Users/pc/Downloads/shinkai-anime-main/anime-backend/node_modules/uint8-util/dist/src/node.js:12:41)
+    at Torrent._onTorrentId (file:///C:/Users/pc/Downloads/shinkai-anime-main/anime-backend/node_modules/webtorrent/lib/torrent.js:281:23)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  code: 'ERR_INVALID_ARG_TYPE'
+}
+
+Node.js v24.21.0

@@ -1,0 +1,10 @@
+
+🎬 Shinkai WebTorrent backend → http://localhost:4000
+   Health:  http://localhost:4000/health
+   Search:  http://localhost:4000/api/torrent/search?query=…&episode=…
+   Stream:  http://localhost:4000/api/torrent/stream?magnet=…
+
+[doh] cloudflare: nyaa.si -> 186.2.163.20 (153 ms)
+[doh] lookup nyaa.si -> 186.2.163.20 (family=4, source=doh:cloudflare)
+[doh] cache: nyaa.si -> 186.2.163.20 (ttl=282s, source=doh:cloudflare)
+[doh] lookup nyaa.si -> 186.2.163.20 (family=4, source=doh:cloudflare)

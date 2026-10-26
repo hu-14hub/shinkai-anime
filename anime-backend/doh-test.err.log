@@ -1,0 +1,1 @@
+[doh] system resolver failed for nyaa.si (ENOTFOUND: getaddrinfo ENOTFOUND nyaa.si) — falling back to DoH

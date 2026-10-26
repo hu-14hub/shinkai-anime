@@ -13,6 +13,8 @@
 import { Router } from "express";
 import axios from "axios";
 import * as cheerio from "cheerio";
+import https from "node:https";
+import { dohLookup } from "../util/doh.js";
 
 const router = Router();
 
@@ -166,11 +168,40 @@ export function parsePage(html) {
  * Fetch and parse one Nyaa search page.
  * @returns {Promise<Array>} sorted results (may be empty when Nyaa finds nothing)
  */
+/**
+ * HTTP(S) agent used for the nyaa.si scrape. Two non-default options:
+ *
+ *   lookup: dohLookup
+ *     Replaces Node's `dns.lookup` for this agent's connections. It is a
+ *     narrow shim that routes nyaa.si (and sub-domains) through a public
+ *     DoH resolver *only when the system resolver fails* — leaving all
+ *     other DNS traffic untouched. See src/util/doh.js for details,
+ *     error handling and logging.
+ *
+ *   family: 4
+ *     DoH (A records) returns IPv4 only; forcing family 4 keeps the agent
+ *     consistent with what `dohLookup` returns, regardless of OS default
+ *     (IPv4-preferred on Windows, IPv6-preferred on Linux/macOS).
+ *
+ * IMPORTANT (axios v1): the Node adapter selects the agent via `httpsAgent`
+ * for https:// requests (see `lib/adapters/http.js` — it reads
+ * `own('httpsAgent')`, NOT the generic `agent`). Passing `agent:` alone is
+ * ignored for HTTPS and silently falls back to `https.globalAgent` (system
+ * DNS). We therefore pass `httpsAgent:` (and `httpAgent:` for the http
+ * edge-case) so this custom lookup is actually used.
+ */
+const NYAA_HTTPS_AGENT = new https.Agent({
+  lookup: dohLookup,
+  family: 4,
+});
+
 async function fetchAndParse(query) {
   const { data } = await axios.get(nyaaUrl(query), {
     headers: SCAN_HEADERS,
     timeout: SCRAPE_TIMEOUT_MS,
     responseType: "text",
+    httpsAgent: NYAA_HTTPS_AGENT,
+    httpAgent: NYAA_HTTPS_AGENT,
   });
   return parsePage(data);
 }
