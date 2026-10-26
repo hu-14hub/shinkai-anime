@@ -160,9 +160,6 @@ export function VideoPlayer({
   const [nextCountdown, setNextCountdown] = useState<number | null>(null);
   // Bump to force the load effect to run again (Retry button / recover).
   const [loadAttempt, setLoadAttempt] = useState(0);
-  // Iframe (AniPub embed) mode: shows a spinner until the embed loads and a
-  // "Open in a new tab" fallback if it ever fails to load inside the frame.
-  const [iframeLoading, setIframeLoading] = useState(true);
   const resumeRef = useRef(resumeAt);
   useEffect(() => {
     resumeRef.current = resumeAt;
@@ -184,14 +181,6 @@ export function VideoPlayer({
     if (idx >= 0 && idx !== srcIndex) setSrcIndex(idx);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedSourceId]);
-
-  /* ---------------------------------------------------------------- */
-  /* Iframe (AniPub embed) mode: reset the loading flag on source change */
-  /* ---------------------------------------------------------------- */
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (source?.kind === "iframe") setIframeLoading(true);
-  }, [source, loadAttempt]);
 
   /* Track native buffered extent for the HTTP/HLS path. */
   useEffect(() => {
@@ -945,53 +934,7 @@ export function VideoPlayer({
             allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
             allowFullScreen
             referrerPolicy="no-referrer-when-downgrade"
-            onLoad={() => setIframeLoading(false)}
           />
-          {/* Loading hero — shown while the frame is blank (before onLoad). It
-              carries a prominent CTA the moment the user sees an empty frame,
-              because some third-party sites reject embeds and never finish
-              "loading" in a usable way. */}
-          {iframeLoading && (
-            <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-5 bg-neutral-950/95 px-5 text-center">
-              <span
-                className="h-9 w-9 animate-spin rounded-full border-2 border-white/25 border-t-white"
-                aria-hidden
-              />
-              {epTitle && (
-                <h2 className="max-w-[28rem] break-words text-base font-semibold text-white/90">
-                  {epTitle}
-                </h2>
-              )}
-              <a
-                href={source.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="pointer-events-auto inline-flex flex-wrap items-center justify-center gap-2.5 rounded-xl bg-brand px-6 py-3.5 text-sm font-bold leading-tight text-neutral-950 shadow-[0_12px_40px_-12px] shadow-brand/60 ring-1 ring-white/25 transition hover:brightness-[1.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-white sm:text-base sm:px-7"
-                dir="auto"
-                aria-label={dict.player.openInNewTab}
-              >
-                <span className="font-bold">Watch on {source.name} (External)</span>
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M7 17 17 7" />
-                  <path d="M7 7h10v10" />
-                </svg>
-              </a>
-              <p className="max-w-[30rem] text-xs leading-relaxed text-white/55 sm:text-sm">
-                This server opens in its own tab; some sites block in-page
-                embedding, so use the button above to watch directly.
-              </p>
-            </div>
-          )}
         </div>
       )}
       {!isWrap && panel === "speed" && (
