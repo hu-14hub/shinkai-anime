@@ -362,55 +362,111 @@ function buildTorrentSourceFromResult(r: NyaaTorrentResult): StreamingSource {
  *
  * We fail CLOSED here on purpose: any error means "no torrent source", which
  * lets the caller silently fall through to the web-embed (AniPub) path.
+ *
+ * Every branch logs verbosely (tag `[STREAM] [Nyaa]`) so that, in the browser
+ * console, you can see the exact URL hit and the precise reason a magnet did
+ * or did not come back in real time.
  */
 async function fetchTorrentSource(
   query: string,
   episode: number
 ): Promise<StreamingSource | null> {
+  const params = new URLSearchParams({
+    query,
+    ...(episode ? { episode: String(episode) } : {}),
+  });
+  const url = `${TORRENT_API_BASE}/api/torrent/search?${params.toString()}`;
+  const t0 = performance.now();
+  const elapsed = () => `${Math.round(performance.now() - t0)} ms`;
+
+  // Log the base URL too so a port/host mismatch is instantly visible.
+  console.log(
+    `[STREAM] [Nyaa] -> GET ${url}\n   (TORRENT_API_BASE=${TORRENT_API_BASE})`
+  );
+
+  const controller = new AbortController();
+  const abortState = { timedOut: false };
+  const timeoutId = setTimeout(() => {
+    abortState.timedOut = true;
+    controller.abort();
+  }, 10_000);
+
+  let res: Response;
   try {
-    const params = new URLSearchParams({
-      query,
-      ...(episode ? { episode: String(episode) } : {}),
-    });
-    const url = `${TORRENT_API_BASE}/api/torrent/search?${params.toString()}`;
-
-    const controller = new AbortController();
-    // The backend scr5ape-s nyaa.si itself (up to ~15 s); 10 s keeps the player
-    // from hanging when the backend is slow or the network is down.
-    const timeoutId = setTimeout(() => controller.abort(), 10_000);
-    let res: Response;
-    try {
-      res = await fetch(url, { signal: controller.signal });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    if (!res.ok) {
-      console.warn(`[STREAM] [Nyaa] search not ok → HTTP ${res.status} for "${query}" ep=${episode}`);
-      return null;
-    }
-
-    const data = (await res.json()) as {
-      best?: NyaaTorrentResult | null;
-      results?: NyaaTorrentResult[];
-    };
-    const best = data.best ?? data.results?.[0];
-    if (best?.magnet) {
-      console.log(
-        `[STREAM] [Nyaa] matched "${best.title}" (seeders=${best.seeders}, ${best.size}) for "${query}" ep=${episode}`
-      );
-      return buildTorrentSourceFromResult(best);
-    }
-    console.warn(`[STREAM] [Nyaa] no magnet returned for "${query}" ep=${episode}`);
-    return null;
+    res = await fetch(url, { signal: controller.signal });
   } catch (err) {
-    console.warn(
-      `[STREAM] [Nyaa] search failed for "${query}" ep=${episode}: ${
-        err instanceof Error ? err.message : String(err)
-      }`
+    // A REJECTED fetch (no response at all) is one of:
+    //   (a) our 10 s timeout fired       -> AbortError, abortState.timedOut=true
+    //   (b) backend not running          -> "Failed to fetch" (connection refused)
+    //   (c) CORS preflight blocked       -> "Failed to fetch"
+    // The browser wording for (b) vs (c) is identical, and (b) — the backend
+    // not being up on that port — is by far the most common cause.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (abortState.timedOut) {
+      console.error(
+        `[STREAM] [Nyaa] TIMEOUT after 10000 ms for "${query}" ep=${episode}.\n` +
+          `        Backend is up but the nyaa.si scrape is too slow.\n` +
+          `        Check the backend console (a slow/blocked nyaa scrape).\n` +
+          `        Or point NEXT_PUBLIC_TORRENT_API_BASE at a hotter instance.`
+      );
+    } else {
+      console.error(
+        `[STREAM] [Nyaa] NETWORK/CORS failure (${elapsed()}): ${msg}\n` +
+          `        Failed: GET ${url}\n` +
+          `        => Most likely the backend is NOT running at ${TORRENT_API_BASE}.\n` +
+          `        => Start it:  cd anime-backend && npm start    then reload/retry.\n` +
+          `        (If it IS running and you still see this, it is a CORS block —\n` +
+          `         but the backend sends Access-Control-Allow-Origin: * by default.)`
+      );
+    }
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  // Read the body as text so non-200 responses (404/502/503/504) KEEP their
+  // JSON reason — the single most useful diagnostic for "why no magnet".
+  const bodyText = await res.text().catch(() => "");
+  const ms = Math.round(performance.now() - t0);
+
+  if (!res.ok) {
+    console.error(
+      `[STREAM] [Nyaa] <== HTTP ${res.status} ${res.statusText} (${ms} ms) — no magnet\n` +
+        `        body: ${bodyText.slice(0, 600) || "(empty)"}`
     );
     return null;
   }
+
+  let data: {
+    best?: NyaaTorrentResult | null;
+    results?: NyaaTorrentResult[];
+    count?: number;
+  };
+  try {
+    data = bodyText ? (JSON.parse(bodyText) as typeof data) : {};
+  } catch (parseErr) {
+    console.error(
+      `[STREAM] [Nyaa] 200 but body is not JSON — cannot read a magnet. body: ${bodyText.slice(0, 600)}`
+    );
+    return null;
+  }
+
+  const best = data.best ?? data.results?.[0];
+  if (best?.magnet) {
+    console.log(
+      `[STREAM] [Nyaa] OK ${data.count ?? 1} result(s), using best: "${best.title}" ` +
+        `(seeders=${best.seeders}, leeches=${best.leeches}, ${best.size})\n` +
+        `        magnet: ${best.magnet}`
+    );
+    return buildTorrentSourceFromResult(best);
+  }
+
+  console.warn(
+    `[STREAM] [Nyaa] 200 but NO magnet in payload (count=${
+      data.count ?? data.results?.length ?? 0
+    }). body: ${bodyText.slice(0, 600)}`
+  );
+  return null;
 }
 
 /** Map an episode to its streaming sources & subtitle tracks.

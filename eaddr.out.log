@@ -1,0 +1,6 @@
+
+🎬 Shinkai WebTorrent backend → http://localhost:4000
+   Health:  http://localhost:4000/health
+   Search:  http://localhost:4000/api/torrent/search?query=…&episode=…
+   Stream:  http://localhost:4000/api/torrent/stream?magnet=…
+
