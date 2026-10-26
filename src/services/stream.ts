@@ -11,6 +11,14 @@ import type { EpisodeStream, StreamingSource, SubtitleTrack } from "@/types";
 const ANIPUB_BASE = "https://anipub.org";
 
 /**
+ * Base URL of the local WebTorrent streaming backend (see `anime-backend/`).
+ * Override with NEXT_PUBLIC_TORRENT_API_BASE in production (e.g. to point at
+ * a deployed backend instance).
+ */
+const TORRENT_API_BASE =
+  process.env.NEXT_PUBLIC_TORRENT_API_BASE ?? "http://localhost:4000";
+
+/**
  * Headers required by AniPub's server / Cloudflare protection.
  * Vercel serverless IP ranges are often blocked unless a proper browser-like
  * User-Agent, Referer, and Accept header are supplied.
@@ -285,6 +293,33 @@ function buildAniPubSource(url: string): StreamingSource {
     default: true,
     kind,
     isHls,
+  };
+}
+
+/**
+ * Build a WebTorrent streaming source for a magnet link.
+ *
+ * The magnet URL is base64-encoded and then `encodeURIComponent`d so it survives
+ * URL routing (Express URL-decodes `req.query.*` values once — this keeps the
+ * base64 payload intact). The backend's `decodeMagnet` reverses the base64 step.
+ *
+ * `kind: "hls"` + `isHls: false` is the codebase convention for a *progressive*
+ * native `<video src>` stream — the player plays it directly (no hls.js, no
+ * iframe), and the backend's HTTP Range support enables seeking.
+ */
+export function buildTorrentSource(magnetUrl: string): StreamingSource {
+  const payload = btoa(magnetUrl);
+  const url = `${TORRENT_API_BASE}/api/torrent/stream?magnet=${encodeURIComponent(
+    payload
+  )}`;
+  return {
+    id: "torrent",
+    name: "Torrent",
+    url,
+    quality: "auto",
+    default: true,
+    kind: "hls",
+    isHls: false,
   };
 }
 
