@@ -1,0 +1,6 @@
+
+❌ Port 4000 is already in use by another process.
+   A previous backend (or another service) is still holding it.
+   Fix:  cd anime-backend && npm run freeport    # frees port 4000
+   then start again (plain `npm start` / `dev` already clears it first).
+

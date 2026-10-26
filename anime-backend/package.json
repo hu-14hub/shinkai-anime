@@ -6,7 +6,10 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
+    "freeport": "node scripts/freeport.mjs",
+    "prestart": "node scripts/freeport.mjs 4000",
     "start": "node index.js",
+    "predev": "node scripts/freeport.mjs 4000",
     "dev": "node --watch index.js"
   },
   "dependencies": {

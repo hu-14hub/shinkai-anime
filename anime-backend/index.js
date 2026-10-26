@@ -190,11 +190,35 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, activeTorrents: client.torrents.length });
 });
 
-app.listen(PORT, () => {
+// Capture the server handle so the EADDRINUSE handler below can react to it
+// (see "Graceful port already in use handling" further down).
+const server = app.listen(PORT, () => {
   console.log(`\n🎬 Shinkai WebTorrent backend → http://localhost:${PORT}`);
   console.log(`   Health:  http://localhost:${PORT}/health`);
   console.log(
     `   Search:  http://localhost:${PORT}/api/torrent/search?query=…&episode=…`
   );
   console.log(`   Stream:  http://localhost:${PORT}/api/torrent/stream?magnet=…\n`);
+});
+
+/* ------------------------------------------------------------------ */
+/* Graceful "port already in use" handling                            */
+/* ------------------------------------------------------------------ */
+// Without this, a second instance (or a stale one still bound) throws an
+// unhandled `EADDRINUSE` and the process dies with a long, confusing stack.
+// We catch that specific code and exit with a short, actionable message
+// instead. `npm start` / `npm run dev` run `scripts/freeport.mjs` first
+// (see package.json `prestart` / `predev`) to clear the port, so this is the
+// safety net for manual or parallel runs.
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(
+      `\n❌ Port ${PORT} is already in use by another process.\n` +
+        `   A previous backend (or another service) is still holding it.\n` +
+        `   Fix:  cd anime-backend && npm run freeport    # frees port ${PORT}\n` +
+        `   then start again (plain \`npm start\` / \`dev\` already clears it first).\n`
+    );
+    process.exit(1);
+  }
+  throw err; // re-throw anything non-EADDRINUSE — it's a genuine bug.
 });
