@@ -274,6 +274,101 @@ function classifySource(url: string): { kind: "hls" | "iframe"; isHls: boolean }
   return { kind: "iframe", isHls: false };
 }
 
+/** An embed server listed on the Animex (animex.one) watch page. Each
+ * resolves a deterministic iframe embed URL from the normalized anime slug +
+ * 1-based episode number. */
+export type AnimexServerId =
+  | "anmx"
+  | "zen"
+  | "koto"
+  | "zoro"
+  | "yuki"
+  | "loli"
+  | "sora";
+/** AniPub is the server we discover real URLs for via its search API. */
+export type StreamProviderId = AnimexServerId | "anipub";
+
+interface EmbedResolver {
+  id: AnimexServerId;
+  name: string;
+  /** Build the iframe embed URL for (slug, 1-based episode). */
+  buildUrl: (slug: string, episode: number) => string;
+}
+
+/** Embed URL patterns for the extra Animex servers. They are intentionally
+ * best-effort guesses — different mirror sites use different host/path
+ * conventions, so a host may need adjusting against the live site. Every one
+ * always renders as an iframe (kind: "iframe" in buildEmbedSource) inside the
+ * existing iframe branch in `video-player.tsx`. */
+const ANIMEX_EMBED_SERVERS: EmbedResolver[] = [
+  {
+    id: "anmx",
+    name: "ANMX",
+    buildUrl: (slug, episode) => `https://anmx.one/embed/${slug}/1/${episode}`,
+  },
+  {
+    id: "zen",
+    name: "ZEN",
+    buildUrl: (slug, episode) =>
+      `https://zenembed1.cc/e/${encodeURIComponent(slug)}?episode=${episode}`,
+  },
+  {
+    id: "koto",
+    name: "KOTO",
+    buildUrl: (slug, episode) => `https://koto-anime.net/embed/${slug}-${episode}`,
+  },
+  {
+    id: "zoro",
+    name: "Zoro",
+    buildUrl: (slug, episode) =>
+      `https://zoro.tv/watch/${slug}/episode-${episode}`,
+  },
+  {
+    id: "yuki",
+    name: "Yuki",
+    buildUrl: (slug, episode) =>
+      `https://yuki.to/watch/${slug}/episode-${episode}`,
+  },
+  {
+    id: "loli",
+    name: "Loli",
+    buildUrl: (slug, episode) => `https://loli.net/embed/${slug}-${episode}`,
+  },
+  {
+    id: "sora",
+    name: "Sora",
+    buildUrl: (slug, episode) => `https://sora.to/embed/${slug}/${episode}`,
+  },
+];
+
+/** Build an iframe source from an embed resolver. These are always iframes. */
+function buildEmbedSource(
+  resolver: EmbedResolver,
+  slug: string,
+  episode: number
+): StreamingSource {
+  return {
+    id: resolver.id,
+    name: resolver.name,
+    url: resolver.buildUrl(slug, episode),
+    quality: "auto",
+    default: false,
+    kind: "iframe",
+    isHls: false,
+  };
+}
+
+/** Build iframe sources for every extra Animex embed server. */
+function buildAnimexEmbedSources(
+  slug: string,
+  episode: number
+): StreamingSource[] {
+  const clean = cleanSlug(slug);
+  return ANIMEX_EMBED_SERVERS.map((resolver) =>
+    buildEmbedSource(resolver, clean, episode)
+  );
+}
+
 /** Build the single AniPub streaming source for a resolved episode URL. */
 function buildAniPubSource(url: string): StreamingSource {
   const { kind, isHls } = classifySource(url);
@@ -290,16 +385,26 @@ function buildAniPubSource(url: string): StreamingSource {
 
 /** Map an episode to its streaming sources & subtitle tracks.
  *
- * Resolution flow (browser-safe — runs client-side so Vercel's blocked
+ * Returns a `sources` array of every available server so the watch page can
+ * render them all as selectable options:
+ *   - The AniPub source — the only server whose real URL is *discovered* at
+ *     runtime via its search API. It stays the default (`default: true`).
+ *   - The extra Animex servers (ANMX, ZEN, KOTO, Zoro, Yuki, Loli, Sora) —
+ *     deterministic iframe embeds built straight from the anime slug + episode
+ *     (`kind: "iframe"`), always included so they appear in the server
+ *     selector even when AniPub fails.
+ *
+ * AniPub resolution flow (browser-safe — runs client-side so Vercel's blocked
  * server-side requests are never involved):
  *   1. Search AniPub by the anime title (or cleaned slug) — `/api/search/:q`.
  *   2. AniPub returns a JSON *array* of candidates OR a *single* result object
  *      — both are normalised. Pick the best match and prefer its numeric `Id`
  *      (with the `finder` slug as a fallback) for the details lookup.
  *   3. Fetch `/v1/api/details/:id` and pick the (1-based) episode's `link`.
- *   4. Classify that link (`iframe` vs `hls`) and return it as a source.
+ *   4. Classify that link (`iframe` vs `hls`) and use it as the source.
  *
- * Returns null when AniPub cannot resolve a valid episode link.
+ * The Animex embed sources always resolve, so the function only returns null
+ * when there is no episode at all to stream.
  */
 export async function getEpisodeStream(
   slug: string,
@@ -363,7 +468,10 @@ export async function getEpisodeStream(
         return {
           slug,
           episode,
-          sources: [buildAniPubSource(url)],
+          sources: [
+            buildAniPubSource(url),
+            ...buildAnimexEmbedSources(slug, episode),
+          ],
           subtitles: [],
         };
       }
@@ -379,8 +487,16 @@ export async function getEpisodeStream(
     console.warn(`[STREAM] [AniPub] search failed q="${query}" — ${reason}`);
   }
 
-  console.error(
-    `[STREAM] [AniPub] NO_VALID_SOURCE slug="${slug}" (cleaned="${clean}") ep=${episode} — AniPub lookup failed`
+  console.warn(
+    `[STREAM] [AniPub] NO_VALID_SOURCE slug="${slug}" (cleaned="${clean}") ep=${episode} — AniPub lookup failed; falling back to Animex embed servers`
   );
-  return null;
+  // AniPub failed, but the deterministic Animex iframe servers (ANMX, ZEN, …)
+  // still resolve from the slug + episode, so return them as selectable
+  // options instead of bailing out with null.
+  return {
+    slug,
+    episode,
+    sources: buildAnimexEmbedSources(slug, episode),
+    subtitles: [],
+  };
 }
